@@ -29,6 +29,8 @@ const remindersRoutes = require('./routes/reminders');
 app.use('/api/reminders', remindersRoutes);
 const gynoRoutes = require('./routes/gyno');
 app.use('/api/gyno', gynoRoutes);
+const aiRoutes = require('./routes/ai');
+app.use('/api/ai', aiRoutes);
 
 // Test route
 app.get('/', (req, res) => {

@@ -5,13 +5,14 @@ const {
   getWeatherTip,
   getFoodAnalysisTips,
   getBudgetTip,
+  getExerciseSuggestion,
   calculateHealthScore
 } = require('../ai/tipEngine');
 
 // GET WEATHER DATA
 const getWeather = async (lat, lon) => {
   try {
-    const API_KEY = process.env.WEATHER_API_KEY || 'demo';
+    const API_KEY = process.env.WEATHER_API_KEY;
     const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=metric`;
     const response = await axios.get(url);
     return {
@@ -20,7 +21,7 @@ const getWeather = async (lat, lon) => {
       humidity: response.data.main.humidity
     };
   } catch (err) {
-    // Default to Colombo weather if API fails
+    // Default Colombo weather if API fails
     return { temp: 30, condition: 'Sunny', humidity: 80 };
   }
 };
@@ -32,6 +33,13 @@ const generateTips = async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
 
   try {
+    // Get user name
+    const getUserName = () => new Promise((resolve) => {
+      db.query('SELECT full_name FROM users WHERE id = ?', [user_id],
+        (err, results) => resolve(results?.[0]?.full_name?.split(' ')[0] || 'there')
+      );
+    });
+
     // Get cycle phase
     const getPhase = () => new Promise((resolve) => {
       db.query(
@@ -50,7 +58,7 @@ const generateTips = async (req, res) => {
       );
     });
 
-    // Get health profile (for budget)
+    // Get health profile
     const getHealthProfile = () => new Promise((resolve) => {
       db.query(
         'SELECT * FROM user_health_profile WHERE user_id = ?',
@@ -59,17 +67,9 @@ const generateTips = async (req, res) => {
       );
     });
 
-    // Get food logs total cost today
-    const getFoodSpent = () => new Promise((resolve) => {
-      db.query(
-        'SELECT SUM(calories) as total FROM food_logs WHERE user_id = ? AND log_date = ?',
-        [user_id, today],
-        (err, results) => resolve(results?.[0] || null)
-      );
-    });
-
     // Run all queries in parallel
-    const [phase, nutrition, healthProfile, weatherData] = await Promise.all([
+    const [userName, phase, nutrition, healthProfile, weatherData] = await Promise.all([
+      getUserName(),
       getPhase(),
       getNutrition(),
       getHealthProfile(),
@@ -82,14 +82,20 @@ const generateTips = async (req, res) => {
     const estimatedSpent = (caloriesLogged / 2000) * totalBudget;
     const remainingBudget = Math.max(0, totalBudget - estimatedSpent).toFixed(0);
 
-    // Generate all 4 tips
-    const cycleTip = getCyclePhaseTip(phase?.phase_name || 'Unknown');
-    const weatherTip = getWeatherTip(weatherData);
-    const foodTips = getFoodAnalysisTips(nutrition);
-    const budgetTip = getBudgetTip(remainingBudget);
+    // Generate all tips
+    const cycleTip = getCyclePhaseTip(phase?.phase_name || 'Unknown', userName);
+    const weatherTip = getWeatherTip(weatherData, userName);
+    const foodTips = getFoodAnalysisTips(nutrition, healthProfile, userName);
+    const budgetTip = getBudgetTip(remainingBudget, userName);
+    const exerciseTip = getExerciseSuggestion(
+      nutrition?.total_calories || 0,
+      phase?.phase_name,
+      userName
+    );
 
     const allTips = {
       date: today,
+      user_name: userName,
       cycle_tip: {
         type: 'Cycle Phase',
         phase: phase?.phase_name || 'Unknown',
@@ -111,6 +117,10 @@ const generateTips = async (req, res) => {
         total_budget: totalBudget,
         remaining: remainingBudget,
         tip: budgetTip
+      },
+      exercise_tip: {
+        type: 'Exercise',
+        tip: exerciseTip
       }
     };
 
@@ -128,6 +138,7 @@ const generateTips = async (req, res) => {
     saveTip('weather', weatherTip);
     saveTip('food', foodTips.join(' | '));
     saveTip('budget', budgetTip);
+    saveTip('exercise', exerciseTip);
 
     res.json(allTips);
 
@@ -156,68 +167,56 @@ const getPastTips = (req, res) => {
 const getHealthScore = (req, res) => {
   const user_id = req.user.id;
 
-  // Get period logs
-  db.query(
-    'SELECT * FROM period_logs WHERE user_id = ?',
-    [user_id],
-    (err, periodLogs) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
+  db.query('SELECT * FROM period_logs WHERE user_id = ?', [user_id], (err, periodLogs) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
 
-      // Get latest risk level
-      db.query(
-        'SELECT risk_level FROM pcos_risk WHERE user_id = ? ORDER BY assessed_at DESC LIMIT 1',
-        [user_id],
-        (err, riskResults) => {
-          if (err) return res.status(500).json({ message: 'Database error' });
+    db.query(
+      'SELECT risk_level FROM pcos_risk WHERE user_id = ? ORDER BY assessed_at DESC LIMIT 1',
+      [user_id],
+      (err, riskResults) => {
+        if (err) return res.status(500).json({ message: 'Database error' });
 
-          // Get today nutrition
-          const today = new Date().toISOString().split('T')[0];
-          db.query(
-            'SELECT * FROM nutrition_daily WHERE user_id = ? AND log_date = ?',
-            [user_id, today],
-            (err, nutritionResults) => {
-              if (err) return res.status(500).json({ message: 'Database error' });
+        const today = new Date().toISOString().split('T')[0];
+        db.query(
+          'SELECT * FROM nutrition_daily WHERE user_id = ? AND log_date = ?',
+          [user_id, today],
+          (err, nutritionResults) => {
+            if (err) return res.status(500).json({ message: 'Database error' });
 
-              // Get log streak
-              db.query(
-                `SELECT COUNT(DISTINCT log_date) as streak 
-                 FROM food_logs 
-                 WHERE user_id = ? 
-                 AND log_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`,
-                [user_id],
-                (err, streakResults) => {
-                  if (err) return res.status(500).json({ message: 'Database error' });
+            db.query(
+              `SELECT COUNT(DISTINCT log_date) as streak 
+               FROM food_logs 
+               WHERE user_id = ? 
+               AND log_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`,
+              [user_id],
+              (err, streakResults) => {
+                if (err) return res.status(500).json({ message: 'Database error' });
 
-                  const score = calculateHealthScore({
-                    nutrition: nutritionResults[0] || null,
-                    periodLogs: periodLogs,
-                    riskLevel: riskResults[0]?.risk_level || 'Unknown',
-                    logStreak: streakResults[0]?.streak || 0
-                  });
+                const score = calculateHealthScore({
+                  nutrition: nutritionResults[0] || null,
+                  periodLogs: periodLogs,
+                  riskLevel: riskResults[0]?.risk_level || 'Unknown',
+                  logStreak: streakResults[0]?.streak || 0
+                });
 
-                  res.json({
-                    health_score: score,
-                    breakdown: {
-                      nutrition: '30%',
-                      cycle_regularity: '25%',
-                      symptoms: '25%',
-                      consistency: '20%'
-                    },
-                    log_streak: streakResults[0]?.streak || 0,
-                    risk_level: riskResults[0]?.risk_level || 'Unknown'
-                  });
-                }
-              );
-            }
-          );
-        }
-      );
-    }
-  );
+                res.json({
+                  health_score: score,
+                  breakdown: {
+                    nutrition: '30%',
+                    cycle_regularity: '25%',
+                    symptoms: '25%',
+                    consistency: '20%'
+                  },
+                  log_streak: streakResults[0]?.streak || 0,
+                  risk_level: riskResults[0]?.risk_level || 'Unknown'
+                });
+              }
+            );
+          }
+        );
+      }
+    );
+  });
 };
 
-module.exports = {
-  generateTips,
-  getPastTips,
-  getHealthScore
-};
+module.exports = { generateTips, getPastTips, getHealthScore };

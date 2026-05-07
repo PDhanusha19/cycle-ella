@@ -1,160 +1,181 @@
 // ============================================
-// CYCLE ELLA — AI TIP ENGINE
-// Generates personalized tips based on:
-// 1. Cycle phase
-// 2. Weather
-// 3. Food log analysis
-// 4. Budget remaining
+// CYCLE ELLA — PERSONALIZED AI COACH ENGINE
+// Algorithm 1: Rule-Based Expert System
 // ============================================
 
-// TIP 1 — CYCLE PHASE TIPS
-const getCyclePhaseTip = (phaseName) => {
+const getCyclePhaseTip = (phaseName, userName) => {
+  const name = userName || 'there';
   const tips = {
     'Menstrual': {
-      tip: `You're in your menstrual phase — your body needs extra iron and warmth right now.`,
+      tip: `Hey ${name}! You're in your menstrual phase. Your body needs extra iron and warmth right now 🌸`,
       foods: ['Spinach', 'Dates', 'Lentils', 'Dark chocolate', 'Ginger tea'],
-      avoid: ['Caffeine', 'Salty foods', 'Alcohol'],
-      exercise: 'Light walking or yoga recommended'
+      avoid: ['Caffeine', 'Salty foods', 'Cold drinks'],
+      exercise: `${name}, light walking or gentle yoga is best during your period. Avoid intense workouts today.`
     },
     'Follicular': {
-      tip: `You're in your follicular phase — energy is rising! Great time for protein-rich meals.`,
+      tip: `Hey ${name}! You're in your follicular phase — energy is rising! Focus on protein-rich meals 💪`,
       foods: ['Eggs', 'Legumes', 'Nuts', 'Quinoa', 'Fresh vegetables'],
-      avoid: ['Heavy processed foods'],
-      exercise: 'Good time for moderate exercise'
+      avoid: ['Heavy processed foods', 'Excess sugar'],
+      exercise: `${name}, moderate exercise like a 30 min walk or light gym session is perfect today!`
     },
     'Ovulatory': {
-      tip: `You're in your ovulatory phase — peak energy! Focus on antioxidant-rich foods.`,
+      tip: `Hey ${name}! You're at peak energy in your ovulatory phase! Focus on antioxidant-rich foods 🌟`,
       foods: ['Berries', 'Avocado', 'Leafy greens', 'Salmon', 'Flaxseeds'],
-      avoid: ['Excess sugar', 'Refined carbs'],
-      exercise: 'Best time for high intensity workouts'
+      avoid: ['Excess sugar', 'Refined carbs', 'Alcohol'],
+      exercise: `${name}, this is your best time for exercise! Try a 45 min workout or brisk walk today.`
     },
     'Luteal': {
-      tip: `You're in your luteal phase — reduce sugar and focus on magnesium-rich foods to manage PMS.`,
+      tip: `Hey ${name}! You're in your luteal phase — reduce sugar and eat magnesium-rich foods to manage PMS 🍫`,
       foods: ['Dark chocolate', 'Nuts', 'Spinach', 'Sweet potato', 'Chamomile tea'],
       avoid: ['Sugar', 'Caffeine', 'Alcohol', 'Fried foods'],
-      exercise: 'Light to moderate exercise'
+      exercise: `${name}, a 20 min walk or stretching session will help reduce bloating and mood swings.`
     }
   };
 
   return tips[phaseName] || {
-    tip: 'Maintain a balanced diet with whole foods and stay hydrated.',
+    tip: `Hey ${name}! Maintain a balanced diet with whole foods and stay hydrated today 🌸`,
     foods: ['Vegetables', 'Fruits', 'Whole grains', 'Lean protein'],
     avoid: ['Processed foods', 'Excess sugar'],
-    exercise: 'Regular moderate exercise'
+    exercise: `${name}, aim for at least 20 mins of light activity today!`
   };
 };
 
-// TIP 2 — WEATHER TIPS
-const getWeatherTip = (weatherData) => {
-  if (!weatherData) {
-    return 'Stay hydrated and maintain a balanced diet today.';
-  }
+const getWeatherTip = (weatherData, userName) => {
+  const name = userName || 'there';
+  if (!weatherData) return `${name}, stay hydrated and maintain a balanced diet today 💧`;
 
   const temp = weatherData.temp;
-  const condition = weatherData.condition?.toLowerCase() || '';
 
-  if (temp >= 30) {
-    return `It's hot and humid today (${temp}°C) — avoid heavy fried foods. Drink at least 2.5L of water. Try coconut water or fresh lime juice to stay cool.`;
-  } else if (temp >= 25) {
-    return `It's warm today (${temp}°C) — stay hydrated with light meals. Fresh fruits and salads are great choices.`;
-  } else if (temp >= 20) {
-    return `Pleasant weather today (${temp}°C) — a great day for a balanced meal with vegetables and lean protein.`;
-  } else if (temp >= 15) {
-    return `It's a bit cool today (${temp}°C) — warm soups, herbal teas and cooked vegetables will keep you comfortable.`;
+  if (temp >= 32) {
+    return `${name}, it's really hot today at ${temp}°C! 🌞 Drink at least 2.5L of water. Avoid heavy fried foods — try coconut water or fresh lime juice to cool down.`;
+  } else if (temp >= 28) {
+    return `${name}, it's warm today at ${temp}°C ☀️ Stay hydrated with light meals. Fresh fruits and coconut water are great right now.`;
+  } else if (temp >= 22) {
+    return `${name}, lovely weather today at ${temp}°C 🌤️ A great day for a balanced meal with vegetables and lean protein!`;
+  } else if (temp >= 18) {
+    return `${name}, it's a bit cool today at ${temp}°C 🌧️ Warm soups, herbal teas and cooked vegetables will keep you comfortable.`;
   } else {
-    return `It's cold today (${temp}°C) — have warm meals like soups, dhal curry, and ginger tea to keep your body warm.`;
+    return `${name}, it's cold today at ${temp}°C 🌨️ Have warm meals like soups, dhal curry, and ginger tea. Avoid cold drinks today.`;
   }
 };
 
-// TIP 3 — FOOD LOG ANALYSIS TIPS
-const getFoodAnalysisTips = (nutrition) => {
+const getFoodAnalysisTips = (nutrition, healthProfile, userName) => {
   const tips = [];
+  const name = userName || 'there';
+  const hasDiabetes = healthProfile?.diabetes === 'Yes';
+  const hasHighCholesterol = healthProfile?.cholesterol === 'Yes';
+  const hasHighBP = healthProfile?.blood_pressure === 'Yes';
 
   if (!nutrition || nutrition.total_calories === 0) {
-    return ["You haven't logged any food today. Start logging to get personalized nutrition tips!"];
+    return [`${name}, you haven't logged any food today! Start logging your meals to get personalized tips 🍽️`];
   }
 
-  // Calorie analysis
-  if (nutrition.total_calories > 2000) {
-    tips.push('⚠️ You have exceeded your daily calorie goal — try a light dinner like vegetable soup.');
+  // Diabetes check
+  if (hasDiabetes) {
+    if (nutrition.total_carbs > 150) {
+      tips.push(`⚠️ ${name}, you have diabetes and your carb intake is high today (${Math.round(nutrition.total_carbs)}g). Please avoid rice, bread and sugary drinks for the rest of the day!`);
+    } else if (nutrition.total_carbs > 100) {
+      tips.push(`${name}, since you have diabetes — you've had ${Math.round(nutrition.total_carbs)}g carbs so far. Try to keep it under 150g for today.`);
+    } else {
+      tips.push(`✅ ${name}, great job keeping carbs in check today! Your blood sugar will thank you 😊`);
+    }
+  }
+
+  // Cholesterol check
+  if (hasHighCholesterol) {
+    if (nutrition.total_fats > 50) {
+      tips.push(`⚠️ ${name}, you have high cholesterol and your fat intake is high (${Math.round(nutrition.total_fats)}g). Avoid fried foods and coconut-heavy dishes for the rest of the day!`);
+    } else {
+      tips.push(`✅ ${name}, your fat intake looks okay today. Since you have high cholesterol, keep avoiding fried and oily foods — you're doing well!`);
+    }
+  }
+
+  // Blood pressure check
+  if (hasHighBP) {
+    tips.push(`${name}, since you have high blood pressure — remember to avoid salty foods, pickles and processed snacks today. Drink plenty of water 💙`);
+  }
+
+  // Calorie check + exercise
+  if (nutrition.total_calories > 2200) {
+    tips.push(`${name}, you've consumed ${Math.round(nutrition.total_calories)} kcal today — above your goal! 🏃 Try a 30 min walk this evening to burn the extra calories. Have a light dinner tonight.`);
+  } else if (nutrition.total_calories > 1800) {
+    tips.push(`${name}, you're close to your calorie limit (${Math.round(nutrition.total_calories)} kcal). Have a light dinner and try a 20 min evening walk 🚶`);
   } else if (nutrition.total_calories < 800 && new Date().getHours() > 14) {
-    tips.push('⚠️ Your calorie intake is very low today — make sure to eat a proper meal.');
+    tips.push(`${name}, your calorie intake is very low today (${Math.round(nutrition.total_calories)} kcal)! Please eat a proper meal — skipping meals worsens PCOS symptoms.`);
   }
 
-  // Protein analysis
-  if (nutrition.total_protein < 40) {
-    tips.push('🥜 Your protein is low today — add a handful of groundnuts, 2 boiled eggs, or a cup of dhal to boost it.');
-  } else if (nutrition.total_protein >= 60) {
-    tips.push('✅ Great protein intake today! Keep it up.');
+  // Protein check
+  if (nutrition.total_protein < 30) {
+    tips.push(`${name}, your protein is really low today (${Math.round(nutrition.total_protein)}g) 🥚 Shall we fix that? Eat 2 boiled eggs — gives you 12g protein for under Rs. 40. Or have a handful of groundnuts!`);
+  } else if (nutrition.total_protein < 50) {
+    tips.push(`${name}, your protein could be higher (${Math.round(nutrition.total_protein)}g). Add a cup of dhal curry or a handful of groundnuts to your next meal 🥜`);
+  } else {
+    tips.push(`✅ ${name}, great protein intake today (${Math.round(nutrition.total_protein)}g)! Protein helps manage PCOS symptoms — keep it up!`);
   }
 
-  // Carbs/Sugar analysis
-  if (nutrition.total_carbs > 200) {
-    tips.push('⚠️ Your carb intake is high — avoid sugary drinks and white rice for the rest of the day.');
+  // Fat check
+  if (!hasHighCholesterol && nutrition.total_fats > 70) {
+    tips.push(`⚠️ ${name}, your fat intake is high today (${Math.round(nutrition.total_fats)}g). Avoid fried foods for the rest of the day.`);
   }
 
-  // Fat analysis
-  if (nutrition.total_fats > 65) {
-    tips.push('⚠️ Your fat intake is high — avoid fried foods for the rest of the day.');
-  }
-
-  // Iron check (if available)
-  if (nutrition.iron !== undefined && nutrition.iron < 8) {
-    tips.push('🌿 Your iron is low — add green leafy vegetables like gotukola or spinach to your next meal.');
-  }
-
-  // All good
   if (tips.length === 0) {
-    tips.push('✅ Your nutrition looks balanced today — great job! Keep maintaining this healthy pattern.');
+    tips.push(`✅ ${name}, your nutrition looks really balanced today! Amazing job 🌸`);
   }
 
   return tips;
 };
 
-// TIP 4 — BUDGET TIPS
-const getBudgetTip = (remainingBudget) => {
-  if (!remainingBudget || remainingBudget <= 0) {
-    return "You've reached your daily food budget. Try home-cooked meals for the rest of the day.";
-  }
-
+const getBudgetTip = (remainingBudget, userName) => {
+  const name = userName || 'there';
   const budget = parseFloat(remainingBudget);
 
-  if (budget >= 500) {
-    return `You have Rs. ${budget} remaining today — you can have a proper meal. Try rice with dhal curry and a vegetable side — nutritious and affordable.`;
-  } else if (budget >= 300) {
-    return `You have Rs. ${budget} remaining — dhal curry with rice costs around Rs. 150–200 at most local spots. High in protein and folate!`;
-  } else if (budget >= 150) {
-    return `You have Rs. ${budget} left — a banana and a boiled egg is a great snack under Rs. 100. Gives you potassium and protein!`;
-  } else if (budget >= 50) {
-    return `You have Rs. ${budget} left — a cup of plain tea and a roti is a light option under Rs. 50.`;
+  if (!remainingBudget || budget <= 0) {
+    return `${name}, you've reached your daily food budget! Try home-cooked meals for the rest of the day 🏠`;
+  }
+
+  if (budget >= 600) {
+    return `${name}, you have Rs. ${budget} remaining today 💰 Try rice with dhal curry and a vegetable side — filling, healthy, and under Rs. 300!`;
+  } else if (budget >= 400) {
+    return `${name}, Rs. ${budget} left — a plate of rice with dhal curry costs around Rs. 200-250. High in protein and folate — perfect for PCOS!`;
+  } else if (budget >= 250) {
+    return `${name}, Rs. ${budget} remaining — dhal curry with rice at Rs. 150-200 is your best bet. High in protein, iron and folate 🍛`;
+  } else if (budget >= 100) {
+    return `${name}, Rs. ${budget} left — a banana and a boiled egg is perfect under Rs. 80! 🍌🥚 Gives you potassium and 6g protein!`;
   } else {
-    return `Budget is almost done for today — try drinking water and having home food for your next meal.`;
+    return `${name}, budget is very tight (Rs. ${budget} left). Drink water and have home food for your next meal 💙`;
   }
 };
 
-// CALCULATE HEALTH SCORE
+const getExerciseSuggestion = (calories, phaseName, userName) => {
+  const name = userName || 'there';
+
+  if (calories > 2000) {
+    return `${name}, you've eaten quite a lot today! Try a 30 min walk this evening 🚶 Even a slow walk around your neighbourhood counts!`;
+  } else if (calories > 1600) {
+    return `${name}, a 20 min walk today would be great for your metabolism and PCOS management 🌸`;
+  } else if (phaseName === 'Ovulatory') {
+    return `${name}, you're in your ovulatory phase — best time for exercise! Try a 30-45 min workout today 💪`;
+  } else if (phaseName === 'Luteal') {
+    return `${name}, a gentle 20 min walk will help with bloating and mood changes from your luteal phase 🌿`;
+  } else {
+    return `${name}, try to get at least 20 mins of light movement today — a walk, yoga, or stretching. It really helps PCOS! 🌸`;
+  }
+};
+
 const calculateHealthScore = (data) => {
   let score = 0;
 
-  // Nutrition score (30%)
   if (data.nutrition && data.nutrition.total_calories > 0) {
-    const calorieScore = Math.min(30, (data.nutrition.total_calories / 1800) * 30);
-    score += calorieScore;
+    score += Math.min(30, (data.nutrition.total_calories / 1800) * 30);
   }
 
-  // Cycle regularity (25%)
-  if (data.periodLogs && data.periodLogs.length >= 2) {
-    score += 25;
-  } else if (data.periodLogs && data.periodLogs.length === 1) {
-    score += 12;
-  }
+  if (data.periodLogs && data.periodLogs.length >= 2) score += 25;
+  else if (data.periodLogs && data.periodLogs.length === 1) score += 12;
 
-  // Symptoms (25%)
   if (data.riskLevel === 'Low') score += 25;
   else if (data.riskLevel === 'Moderate') score += 15;
   else if (data.riskLevel === 'High') score += 5;
 
-  // Consistency/streak (20%)
   if (data.logStreak >= 7) score += 20;
   else if (data.logStreak >= 3) score += 12;
   else if (data.logStreak >= 1) score += 5;
@@ -167,5 +188,6 @@ module.exports = {
   getWeatherTip,
   getFoodAnalysisTips,
   getBudgetTip,
+  getExerciseSuggestion,
   calculateHealthScore
 };
