@@ -13,6 +13,8 @@ app.use(express.json());
 // Routes
 const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
+const profileRoutes = require('./routes/profile');
+app.use('/api/profile', profileRoutes);
 
 // Test route
 app.get('/', (req, res) => {
