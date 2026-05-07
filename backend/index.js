@@ -15,6 +15,10 @@ const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
 const profileRoutes = require('./routes/profile');
 app.use('/api/profile', profileRoutes);
+const pcosRoutes = require('./routes/pcos');
+app.use('/api/pcos', pcosRoutes);
+const periodRoutes = require('./routes/period');
+app.use('/api/period', periodRoutes);
 
 // Test route
 app.get('/', (req, res) => {
