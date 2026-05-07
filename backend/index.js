@@ -21,6 +21,8 @@ const periodRoutes = require('./routes/period');
 app.use('/api/period', periodRoutes);
 const foodRoutes = require('./routes/food');
 app.use('/api/food', foodRoutes);
+const tipsRoutes = require('./routes/tips');
+app.use('/api/tips', tipsRoutes);
 
 // Test route
 app.get('/', (req, res) => {
