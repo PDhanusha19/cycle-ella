@@ -23,6 +23,12 @@ const foodRoutes = require('./routes/food');
 app.use('/api/food', foodRoutes);
 const tipsRoutes = require('./routes/tips');
 app.use('/api/tips', tipsRoutes);
+const reportsRoutes = require('./routes/reports');
+app.use('/api/reports', reportsRoutes);
+const remindersRoutes = require('./routes/reminders');
+app.use('/api/reminders', remindersRoutes);
+const gynoRoutes = require('./routes/gyno');
+app.use('/api/gyno', gynoRoutes);
 
 // Test route
 app.get('/', (req, res) => {
