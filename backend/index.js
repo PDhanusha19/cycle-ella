@@ -19,6 +19,8 @@ const pcosRoutes = require('./routes/pcos');
 app.use('/api/pcos', pcosRoutes);
 const periodRoutes = require('./routes/period');
 app.use('/api/period', periodRoutes);
+const foodRoutes = require('./routes/food');
+app.use('/api/food', foodRoutes);
 
 // Test route
 app.get('/', (req, res) => {
