@@ -1,0 +1,144 @@
+const db = require('../config/db');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// SIGN UP
+const signUp = (req, res) => {
+  const { full_name, gender, date_of_birth, phone, email, password } = req.body;
+
+  if (!full_name || !phone || !email || !password) {
+    return res.status(400).json({ message: 'Please fill all required fields' });
+  }
+
+  // Check if email already exists
+  db.query('SELECT * FROM users WHERE email = ?', [email], (err, results) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+
+    if (results.length > 0) {
+      return res.status(400).json({ message: 'Email already registered' });
+    }
+
+    // Hash password
+    const hashedPassword = bcrypt.hashSync(password, 10);
+
+    // Insert user
+    const sql = `INSERT INTO users (full_name, gender, date_of_birth, phone, email, password, is_verified) 
+                 VALUES (?, ?, ?, ?, ?, ?, true)`;
+
+    db.query(sql, [full_name, gender, date_of_birth, phone, email, hashedPassword], (err, result) => {
+      if (err) return res.status(500).json({ message: 'Error creating user' });
+
+      const token = jwt.sign({ id: result.insertId }, process.env.JWT_SECRET || 'cycleella_secret_key_2024', {
+        expiresIn: '7d'
+      });
+
+      res.status(201).json({
+        message: 'Account created successfully! 🌸',
+        token,
+        user: {
+          id: result.insertId,
+          full_name,
+          email,
+          phone
+        }
+      });
+    });
+  });
+};
+
+// LOGIN
+const login = (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Please enter email and password' });
+  }
+
+  db.query('SELECT * FROM users WHERE email = ?', [email], (err, results) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+
+    if (results.length === 0) {
+      return res.status(400).json({ message: 'Email not found' });
+    }
+
+    const user = results[0];
+
+    const isMatch = bcrypt.compareSync(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Incorrect password' });
+    }
+
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET || 'cycleella_secret_key_2024', {
+      expiresIn: '7d'
+    });
+
+    res.json({
+      message: 'Login successful! 🌸',
+      token,
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        phone: user.phone
+      }
+    });
+  });
+};
+
+// FORGOT PASSWORD
+const forgotPassword = (req, res) => {
+  const { email } = req.body;
+
+  db.query('SELECT * FROM users WHERE email = ?', [email], (err, results) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+
+    if (results.length === 0) {
+      return res.status(400).json({ message: 'Email not found' });
+    }
+
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+
+    db.query('UPDATE users SET otp = ?, otp_expires = ? WHERE email = ?',
+      [otp, otpExpires, email], (err) => {
+        if (err) return res.status(500).json({ message: 'Error saving OTP' });
+
+        // For now we return OTP in response (later we send via SMS)
+        res.json({
+          message: 'OTP generated successfully',
+          otp: otp
+        });
+      });
+  });
+};
+
+// RESET PASSWORD
+const resetPassword = (req, res) => {
+  const { email, otp, new_password } = req.body;
+
+  db.query('SELECT * FROM users WHERE email = ? AND otp = ?', [email, otp], (err, results) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+
+    if (results.length === 0) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    const user = results[0];
+
+    if (new Date() > new Date(user.otp_expires)) {
+      return res.status(400).json({ message: 'OTP has expired' });
+    }
+
+    const hashedPassword = bcrypt.hashSync(new_password, 10);
+
+    db.query('UPDATE users SET password = ?, otp = NULL WHERE email = ?',
+      [hashedPassword, email], (err) => {
+        if (err) return res.status(500).json({ message: 'Error resetting password' });
+
+        res.json({ message: 'Password reset successfully! 🌸' });
+      });
+  });
+};
+
+module.exports = { signUp, login, forgotPassword, resetPassword };
