@@ -30,8 +30,9 @@ export default function SignUpScreen({ navigation }) {
         password: form.password
       });
       navigation.navigate('OTP', { phone: form.phone, email: form.email });
-    } catch (err) {
-      Alert.alert('Sign Up Failed', err.response?.data?.message || 'Something went wrong');
+} catch (err) {
+      console.error('SignUp Error:', err);
+      Alert.alert('Sign Up Failed', err.response?.data?.message || err.message || 'Network error - check connection');
     } finally {
       setLoading(false);
     }
