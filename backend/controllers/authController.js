@@ -10,23 +10,26 @@ const signUp = (req, res) => {
     return res.status(400).json({ message: 'Please fill all required fields' });
   }
 
-  // Check if email already exists
   db.query('SELECT * FROM users WHERE email = ?', [email], (err, results) => {
-    if (err) return res.status(500).json({ message: 'Database error' });
+    if (err) {
+      console.error('DB Select Error:', err);
+      return res.status(500).json({ message: 'Database error', error: err.message });
+    }
 
     if (results.length > 0) {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
-    // Hash password
     const hashedPassword = bcrypt.hashSync(password, 10);
 
-    // Insert user
     const sql = `INSERT INTO users (full_name, gender, date_of_birth, phone, email, password, is_verified) 
                  VALUES (?, ?, ?, ?, ?, ?, true)`;
 
-    db.query(sql, [full_name, gender, date_of_birth, phone, email, hashedPassword], (err, result) => {
-      if (err) return res.status(500).json({ message: 'Error creating user' });
+    db.query(sql, [full_name, gender || null, date_of_birth || null, phone, email, hashedPassword], (err, result) => {
+      if (err) {
+        console.error('DB Insert Error:', err);
+        return res.status(500).json({ message: 'Error creating user', error: err.message });
+      }
 
       const token = jwt.sign({ id: result.insertId }, process.env.JWT_SECRET || 'cycleella_secret_key_2024', {
         expiresIn: '7d'
@@ -96,7 +99,6 @@ const forgotPassword = (req, res) => {
       return res.status(400).json({ message: 'Email not found' });
     }
 
-    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -104,7 +106,6 @@ const forgotPassword = (req, res) => {
       [otp, otpExpires, email], (err) => {
         if (err) return res.status(500).json({ message: 'Error saving OTP' });
 
-        // For now we return OTP in response (later we send via SMS)
         res.json({
           message: 'OTP generated successfully',
           otp: otp

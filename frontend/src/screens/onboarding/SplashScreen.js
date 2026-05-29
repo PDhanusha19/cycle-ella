@@ -39,6 +39,8 @@ export default function SplashScreen({ navigation }) {
       </View>
 
       <Text style={s.title}>Cycle Ella</Text>
+   
+   
       <Text style={s.sub}>Your PCOS companion,{'\n'}personalized for you 🌸</Text>
 
       <TouchableOpacity style={s.primary} onPress={() => navigation.navigate('Onboarding')} activeOpacity={0.85}>
