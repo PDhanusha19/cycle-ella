@@ -185,9 +185,9 @@ const getHealthScore = (req, res) => {
 
             db.query(
               `SELECT COUNT(DISTINCT log_date) as streak 
-               FROM food_logs 
-               WHERE user_id = ? 
-               AND log_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`,
+                   FROM food_log 
+                   WHERE user_id = ? 
+                   AND log_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`,
               [user_id],
               (err, streakResults) => {
                 if (err) return res.status(500).json({ message: 'Database error' });

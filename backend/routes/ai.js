@@ -25,12 +25,11 @@ router.get('/food/search', protect, searchFoodItem);
 router.get('/food/all', protect, getFoods);
 
 // Full AI analysis overview
-// Full AI analysis overview
 router.get('/analysis', protect, getFullAIAnalysis);
 
 // Python AI routes
-router.get('/python/predict-risk', protect, predictRiskPython);
-router.get('/python/recommendations', protect, getRecommendationsPython);
-router.get('/python/meal-plan', protect, getMealPlan);
+router.post('/python/predict-risk', protect, predictRiskPython);
+router.post('/python/recommendations', protect, getRecommendationsPython);
+router.post('/python/meal-plan', protect, getMealPlan);
 
 module.exports = router;

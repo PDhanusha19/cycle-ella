@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Location from 'expo-location';
 import { colors } from '../../theme/colors';
 import api from '../../api/api';
 
@@ -22,7 +23,15 @@ export default function TipsScreen({ navigation }) {
   const loadTips = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/tips/generate');
+      let lat = 6.9271;
+      let lon = 79.8612;
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
+        const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        lat = location.coords.latitude;
+        lon = location.coords.longitude;
+      }
+      const res = await api.get('/tips/generate', { params: { lat, lon } });
       setTips(res.data);
     } catch (_) {
     } finally {

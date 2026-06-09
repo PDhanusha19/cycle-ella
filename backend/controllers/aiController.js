@@ -2,7 +2,7 @@ const db = require('../config/db');
 const { predictPCOSRisk } = require('../ai/pcosPredictor');
 const { getFoodRecommendations, searchFood, getAllFoods } = require('../ai/foodRecommender');
 const axios = require('axios');
-const PYTHON_AI_URL = 'http://localhost:5001';
+const PYTHON_AI_URL = 'http://localhost:5000';
 
 // ALGORITHM 2 — Neural Network PCOS Prediction
 const predictRisk = (req, res) => {
