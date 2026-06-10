@@ -9,7 +9,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
 from sklearn.metrics import accuracy_score
 from sklearn.metrics.pairwise import cosine_similarity
@@ -85,6 +85,12 @@ cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 binary_cv = cross_val_score(binary_model, X_binary, y_binary, cv=cv).mean()
 print(f"✅ Model 1 (Binary PCOS): Test={binary_test_acc*100:.1f}%, CV={binary_cv*100:.1f}%")
 
+# Gradient Boosting — comparison model
+gb_model = GradientBoostingClassifier(n_estimators=100, random_state=42)
+gb_model.fit(X_train_b, y_train_b)
+gb_test_acc = accuracy_score(y_test_b, gb_model.predict(X_test_b))
+gb_cv = cross_val_score(gb_model, X_binary, y_binary, cv=cv).mean()
+print(f"✅ Gradient Boosting: Test={gb_test_acc*100:.1f}%, CV={gb_cv*100:.1f}%")
 # ============================================
 # MODEL 2: PCOS Risk Level (3 classes)
 # Low / Moderate / High based on AMH
@@ -273,7 +279,8 @@ def health():
         'status': 'running',
         'message': 'Cycle Ella AI Service 🧠🌸',
         'models': {
-            'model_1': f'Binary PCOS Detection - Test: {binary_test_acc*100:.1f}%, CV: {binary_cv*100:.1f}%',
+            'model_1': f'Random Forest PCOS Detection - Test: {binary_test_acc*100:.1f}%, CV: {binary_cv*100:.1f}%',
+            'model_1b': f'Gradient Boosting PCOS - Test: {gb_test_acc*100:.1f}%, CV: {gb_cv*100:.1f}%',
             'model_2': f'PCOS Risk Level - Test: {risk_test_acc*100:.1f}%, CV: {risk_cv*100:.1f}%',
             'model_3': f'Symptom-Based Risk - Test: {symptom_acc*100:.1f}%',
             'model_4': 'Collaborative Filtering + Cosine Similarity',
