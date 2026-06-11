@@ -131,6 +131,22 @@ db.connect((err) => {
           FOREIGN KEY (user_id) REFERENCES users(id)
         )`,
 
+        // Food catalog for AI recommendations
+        `CREATE TABLE IF NOT EXISTS foods (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255),
+          category VARCHAR(100),
+          calories INT,
+          protein DECIMAL(7,2),
+          carbs DECIMAL(7,2),
+          fats DECIMAL(7,2),
+          glycemic_index VARCHAR(50),
+          pcos_friendly BOOLEAN DEFAULT TRUE,
+          description TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )`,
+
+
         `CREATE TABLE IF NOT EXISTS nutrition_daily (
           id INT AUTO_INCREMENT PRIMARY KEY,
           user_id INT NOT NULL,

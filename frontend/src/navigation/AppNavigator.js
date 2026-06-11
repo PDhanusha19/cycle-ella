@@ -72,7 +72,7 @@ const MainTabs = () => (
     <Tab.Screen
       name="PeriodTracker"
       component={PeriodTrackerScreen}
-      options={{ tabBarIcon: ({ focused }) => <TabIcon emoji="📅" label="Tracker" focused={focused} /> }}
+      options={{ tabBarIcon: ({ focused }) => <TabIcon emoji="📅" label="Track" focused={focused} /> }}
     />
     <Tab.Screen
       name="Tips"
