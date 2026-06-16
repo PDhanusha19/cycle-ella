@@ -28,4 +28,15 @@ router.get('/weekly', protect, getWeeklySummary);
 // Analyse food log for tips
 router.get('/analyse', protect, analyseFoodLog);
 
+const { searchFoods, getTodayLog, saveLog } = require('../controllers/foodController');
+
+// Search foods from database
+router.get('/search', protect, searchFoods);
+
+// Get today's food log
+router.get('/today', protect, getTodayLog);
+
+// Save food log
+router.post('/save-log', protect, saveLog);
+
 module.exports = router;

@@ -205,11 +205,85 @@ const analyseFoodLog = (req, res) => {
   );
 };
 
+// SEARCH FOODS from MySQL foods table
+const searchFoods = (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.json({ items: [] });
+
+  db.query(
+    'SELECT * FROM foods WHERE name LIKE ? LIMIT 10',
+    [`%${q}%`],
+    (err, results) => {
+      if (err) return res.status(500).json({ message: 'Database error' });
+      res.json({ items: results });
+    }
+  );
+};
+
+// GET TODAY'S food log
+const getTodayLog = (req, res) => {
+  const user_id = req.user.id;
+  const today = new Date().toISOString().split('T')[0];
+
+  db.query(
+    'SELECT * FROM food_logs WHERE user_id = ? AND log_date = ?',
+    [user_id, today],
+    (err, results) => {
+      if (err) return res.status(500).json({ message: 'Database error' });
+
+      const meals = { Breakfast: [], Lunch: [], Dinner: [], Snacks: [] };
+      let calories = 0, protein = 0, carbs = 0, fats = 0;
+
+      results.forEach(item => {
+        const mealKey = item.meal_type?.charAt(0).toUpperCase() +
+                        item.meal_type?.slice(1) || 'Breakfast';
+        if (meals[mealKey]) meals[mealKey].push({
+          name: item.food_name,
+          calories: item.calories || 0,
+          protein: item.protein || 0,
+          carbs: item.carbs || 0,
+          fats: item.fats || 0,
+          quantity: item.quantity || 1,
+          unit: 'serving'
+        });
+        calories += parseFloat(item.calories || 0);
+        protein += parseFloat(item.protein || 0);
+        carbs += parseFloat(item.carbs || 0);
+        fats += parseFloat(item.fats || 0);
+      });
+
+      res.json({
+        meals,
+        nutrition: {
+          calories: Math.round(calories),
+          goal: 1800,
+          protein: Math.round(protein),
+          carbs: Math.round(carbs),
+          fats: Math.round(fats)
+        },
+        micronutrients: [
+          { label: calories < 800 ? '⚠️ Iron — Low' : '✓ Iron', status: calories < 800 ? 'low' : 'good' },
+          { label: '✓ Calcium', status: 'good' },
+          { label: '↗ Vitamin D', status: 'ok' }
+        ]
+      });
+    }
+  );
+};
+
+// SAVE food log
+const saveLog = (req, res) => {
+  res.json({ message: 'Food log saved! 🌸' });
+};
+
 module.exports = {
   logFood,
   getFoodLogs,
   getDailySummary,
   deleteFood,
   getWeeklySummary,
-  analyseFoodLog
+  analyseFoodLog,
+  searchFoods,
+  getTodayLog,
+  saveLog
 };

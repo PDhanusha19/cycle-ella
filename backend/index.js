@@ -31,6 +31,8 @@ const gynoRoutes = require('./routes/gyno');
 app.use('/api/gyno', gynoRoutes);
 const aiRoutes = require('./routes/ai');
 app.use('/api/ai', aiRoutes);
+const faqRoutes = require('./routes/faq');
+app.use('/api/faq', faqRoutes);
 
 // Test route
 app.get('/', (req, res) => {
