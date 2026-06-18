@@ -9,10 +9,13 @@ const {
   markHelpful
 } = require('../controllers/faqController');
 
-router.get('/', protect, getAllFaq);
-router.get('/categories', protect, getCategories);
-router.get('/search', protect, searchFaq);
-router.get('/category/:category', protect, getByCategory);
+// Public routes - no token needed
+router.get('/', getAllFaq);
+router.get('/categories', getCategories);
+router.get('/search', searchFaq);
+router.get('/category/:category', getByCategory);
+
+// Protected - need token to mark helpful
 router.put('/helpful/:id', protect, markHelpful);
 
 module.exports = router;

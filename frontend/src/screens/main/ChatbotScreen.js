@@ -6,27 +6,24 @@ import { colors } from '../../theme/colors';
 import api from '../../api/api';
 import useStore from '../../store/useStore';
 
-const CATEGORIES = ['PCOS Basics', 'Nutrition', 'Cycle & Hormones', 'Symptoms'];
-const PRESETS = {
-  'PCOS Basics': ['What is PCOS?', 'How is PCOS diagnosed?', 'Can PCOS be cured?', 'Does PCOS affect fertility?'],
-  'Nutrition': ['What foods help with PCOS?', 'Should I avoid sugar with PCOS?', 'Is a low-carb diet good for PCOS?', 'What supplements help with PCOS?'],
-  'Cycle & Hormones': ['Why is my period irregular?', 'What is LH surge?', 'How does PCOS affect hormones?', 'What are cycle phases?'],
-  'Symptoms': ['What causes PCOS hair loss?', 'Why do I have acne with PCOS?', 'What causes PCOS bloating?', 'How to manage PCOS fatigue?'],
-};
-
-const BOT_RESPONSES = {
-  'What is PCOS?': 'PCOS (Polycystic Ovary Syndrome) is a hormonal disorder common among women of reproductive age. It affects how the ovaries work and involves irregular periods, excess androgen (male hormones), and polycystic ovaries.\n\nAround 1 in 10 women of childbearing age have PCOS.',
-  'How is PCOS diagnosed?': 'PCOS is diagnosed using the Rotterdam criteria — you need at least 2 of the following:\n• Irregular or absent periods\n• High levels of androgens (blood test or signs)\n• Polycystic ovaries on ultrasound\n\nYour doctor will also rule out other conditions.',
-};
+const SUGGESTIONS = [
+  'What is PCOS?',
+  'Foods to avoid with PCOS',
+  'Why is my period irregular?',
+  'Best exercises for PCOS',
+];
 
 export default function ChatbotScreen({ navigation }) {
   const user = useStore((s) => s.user);
-  const [activeCategory, setActiveCategory] = useState('PCOS Basics');
   const [messages, setMessages] = useState([
-    { type: 'bot', text: `Hi ${user?.full_name?.split(' ')[0] || 'there'}! 👋 I'm here to help with PCOS and health questions. Tap a question above or type your own below.`, source: 'Based on general health guidelines. Always consult a doctor for personal advice.' },
+    {
+      type: 'bot',
+      text: `Hi ${user?.full_name?.split(' ')[0] || 'there'}! 👋 I can answer questions about PCOS, nutrition, and your cycle. What would you like to know?`,
+    }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(true);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -34,26 +31,64 @@ export default function ChatbotScreen({ navigation }) {
   }, [messages]);
 
   const sendMessage = async (text) => {
-    if (!text.trim()) return;
-    const userMsg = { type: 'user', text: text.trim() };
-    setMessages(m => [...m, userMsg]);
+    const msg = (text || input).trim();
+    if (!msg) return;
+
+    setMessages(m => [...m, { type: 'user', text: msg }]);
     setInput('');
     setLoading(true);
+    setShowSuggestions(false);
 
     try {
-      let botText = BOT_RESPONSES[text.trim()];
-      let source = 'Based on general health guidelines. Always consult a doctor for personal advice.';
-      if (!botText) {
-        const res = await api.post('/ai/chat', { message: text.trim(), category: activeCategory });
-        botText = res.data?.reply || "I'm not sure about that. Please consult your healthcare provider for personalized advice.";
-        source = res.data?.source || source;
+      const words = msg.toLowerCase()
+        .replace(/[^\w\s]/g, '')
+        .split(' ')
+        .filter(w => w.length >= 3)
+        .sort((a, b) => b.length - a.length);
+
+      const searchTerms = words.length > 0 ? words : [msg];
+      let botText = '';
+      let faqId = null;
+
+      for (const term of searchTerms) {
+        const res = await api.get(`/faq/search?q=${encodeURIComponent(term)}`);
+        if (res.data?.length > 0) {
+          botText = res.data[0].answer;
+          faqId = res.data[0].id;
+          break;
+        }
       }
-      setMessages(m => [...m, { type: 'bot', text: botText, source }]);
-    } catch (_) {
-      setMessages(m => [...m, { type: 'bot', text: "I'm having trouble connecting right now. Please try again later.", source: '' }]);
+
+      if (!botText) {
+        botText = "I don't have specific information about that. For personalized advice, please consult your gynecologist. You can find one in the Gyno Directory! 👩‍⚕️";
+      }
+
+      setMessages(m => [...m, {
+        type: 'bot',
+        text: botText,
+        faqId,
+        source: faqId ? '⚕️ Based on general health guidelines. Always consult your doctor.' : ''
+      }]);
+
+} catch (err) {
+  setMessages(m => [...m, {
+    type: 'bot',
+    text: `Error: ${err?.response?.data?.message || err?.message || 'Unknown error'}`
+  }]);
+
     } finally {
       setLoading(false);
     }
+  };
+
+  const markHelpful = async (faqId) => {
+    if (!faqId) return;
+    try {
+      await api.put(`/faq/helpful/${faqId}`);
+      setMessages(m => m.map(msg =>
+        msg.faqId === faqId ? { ...msg, marked: true } : msg
+      ));
+    } catch (_) {}
   };
 
   return (
@@ -62,62 +97,64 @@ export default function ChatbotScreen({ navigation }) {
         <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()}>
           <Text style={s.backArrow}>‹</Text>
         </TouchableOpacity>
+        <View style={s.heroAvatar}>
+          <Text style={{ fontSize: 20 }}>🤖</Text>
+        </View>
         <View style={{ flex: 1 }}>
-          <Text style={s.heroTitle}>FAQ Chatbot 💬</Text>
-          <Text style={s.heroSub}>Ask anything about PCOS, nutrition, or your cycle</Text>
+          <Text style={s.heroTitle}>Cycle Ella Assistant</Text>
+          <View style={s.onlineRow}>
+            <View style={s.onlineDot} />
+            <Text style={s.onlineTxt}>Online</Text>
+          </View>
         </View>
       </LinearGradient>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.catBar} contentContainerStyle={s.catBarContent}>
-        {CATEGORIES.map(cat => (
-          <TouchableOpacity
-            key={cat}
-            style={[s.catBtn, activeCategory === cat && s.catBtnActive]}
-            onPress={() => setActiveCategory(cat)}
-          >
-            {activeCategory === cat ? (
-              <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.catBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={[s.catTxt, s.catTxtActive]}>{cat}</Text>
-              </LinearGradient>
-            ) : (
-              <Text style={s.catTxt}>{cat}</Text>
-            )}
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        <ScrollView ref={scrollRef} style={s.chatArea} contentContainerStyle={s.chatContent} showsVerticalScrollIndicator={false}>
-          {messages.length === 1 && (
-            <View style={s.presetsWrap}>
-              <Text style={s.presetsLabel}>Preset questions</Text>
-              {(PRESETS[activeCategory] || []).map((q, i) => (
-                <TouchableOpacity key={i} style={s.presetBtn} onPress={() => sendMessage(q)}>
-                  <Text style={s.presetTxt}>{q}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          ref={scrollRef}
+          style={s.chatArea}
+          contentContainerStyle={s.chatContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           {messages.map((msg, i) => (
             <View key={i} style={[s.bubbleWrap, msg.type === 'user' && s.bubbleWrapUser]}>
-              <View style={msg.type === 'bot' ? s.botBubble : null}>
-                {msg.type === 'user' ? (
-                  <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.userBubble} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                    <Text style={s.userBubbleTxt}>{msg.text}</Text>
-                  </LinearGradient>
-                ) : (
-                  <>
-                    <Text style={s.botBubbleTxt}>{msg.text}</Text>
-                    {msg.source ? <Text style={s.sourceNote}>{msg.source}</Text> : null}
-                  </>
-                )}
-              </View>
+              {msg.type === 'user' ? (
+                <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.userBubble} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                  <Text style={s.userTxt}>{msg.text}</Text>
+                </LinearGradient>
+              ) : (
+                <View style={s.botBubble}>
+                  <Text style={s.botTxt}>{msg.text}</Text>
+                  {msg.source ? <Text style={s.sourceTxt}>{msg.source}</Text> : null}
+                  {msg.faqId && !msg.marked && (
+                    <TouchableOpacity style={s.helpfulBtn} onPress={() => markHelpful(msg.faqId)}>
+                      <Text style={s.helpfulTxt}>👍 This helped</Text>
+                    </TouchableOpacity>
+                  )}
+                  {msg.marked && <Text style={s.markedTxt}>✅ Glad it helped!</Text>}
+                </View>
+              )}
             </View>
           ))}
+
           {loading && (
             <View style={s.bubbleWrap}>
-              <View style={s.botBubble}>
+              <View style={[s.botBubble, { paddingHorizontal: 20 }]}>
                 <ActivityIndicator color={colors.purple} size="small" />
+              </View>
+            </View>
+          )}
+
+          {showSuggestions && (
+            <View style={s.suggestWrap}>
+              <Text style={s.suggestLabel}>💡 Try asking:</Text>
+              <View style={s.suggestRow}>
+                {SUGGESTIONS.map((q, i) => (
+                  <TouchableOpacity key={i} style={s.chip} onPress={() => sendMessage(q)}>
+                    <Text style={s.chipTxt}>{q}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
             </View>
           )}
@@ -126,19 +163,22 @@ export default function ChatbotScreen({ navigation }) {
         <View style={s.inputBar}>
           <TextInput
             style={s.inputField}
-            placeholder="Type your question..."
+            placeholder="Ask about PCOS, diet, symptoms..."
             placeholderTextColor={colors.textSecondary}
             value={input}
             onChangeText={setInput}
-            onSubmitEditing={() => sendMessage(input)}
+            onSubmitEditing={() => sendMessage()}
             returnKeyType="send"
           />
-          <TouchableOpacity style={s.sendBtn} onPress={() => sendMessage(input)} disabled={!input.trim()}>
-            <View style={[s.sendBtnInner, !input.trim() && { opacity: 0.5 }]}>
-              <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.sendBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={{ fontSize: 16, color: '#fff' }}>→</Text>
-              </LinearGradient>
-            </View>
+          <TouchableOpacity onPress={() => sendMessage()} disabled={!input.trim() || loading}>
+            <LinearGradient
+              colors={input.trim() ? ['#E5457A', '#9B4DB5'] : [colors.border, colors.border]}
+              style={s.sendBtn}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <Text style={{ fontSize: 18, color: '#fff' }}>↑</Text>
+            </LinearGradient>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -147,34 +187,32 @@ export default function ChatbotScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  hero: { paddingHorizontal: 20, paddingVertical: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  hero: { paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
   backBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
   backArrow: { fontSize: 22, color: '#fff', fontWeight: '700' },
-  heroTitle: { fontSize: 17, fontWeight: '800', color: '#fff' },
-  heroSub: { fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 2 },
-  catBar: { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border, maxHeight: 52, flexGrow: 0 },
-  catBarContent: { paddingHorizontal: 16, paddingVertical: 8, gap: 8 },
-  catBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 99, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.surface, overflow: 'hidden' },
-  catBtnActive: { borderColor: 'transparent' },
-  catBtnGrad: { borderRadius: 99, paddingHorizontal: 16, paddingVertical: 8, margin: -16 },
-  catTxt: { fontSize: 11, fontWeight: '800', color: colors.textSecondary, whiteSpace: 'nowrap' },
-  catTxtActive: { color: '#fff' },
+  heroAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+  heroTitle: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  onlineRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  onlineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#2ECC8E' },
+  onlineTxt: { fontSize: 11, color: 'rgba(255,255,255,0.6)' },
   chatArea: { flex: 1, backgroundColor: colors.bg },
-  chatContent: { padding: 16, gap: 12 },
-  presetsWrap: { gap: 8 },
-  presetsLabel: { fontSize: 11, color: colors.textSecondary, fontWeight: '700', textAlign: 'center' },
-  presetBtn: { padding: 14, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.border, borderRadius: 16 },
-  presetTxt: { fontSize: 13, color: colors.textPrimary, fontWeight: '600' },
+  chatContent: { padding: 16, gap: 10, paddingBottom: 12 },
   bubbleWrap: { alignItems: 'flex-start' },
   bubbleWrapUser: { alignItems: 'flex-end' },
-  botBubble: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 20, borderBottomLeftRadius: 4, padding: 14, maxWidth: '86%' },
-  botBubbleTxt: { fontSize: 13, color: colors.textPrimary, lineHeight: 20 },
-  userBubble: { borderRadius: 20, borderBottomRightRadius: 4, padding: 14, maxWidth: '86%' },
-  userBubbleTxt: { fontSize: 13, color: '#fff', lineHeight: 20 },
-  sourceNote: { fontSize: 10, color: colors.textSecondary, marginTop: 8, fontStyle: 'italic' },
-  inputBar: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, paddingHorizontal: 16, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
-  inputField: { flex: 1, padding: 12, paddingHorizontal: 16, borderWidth: 1.5, borderColor: colors.border, borderRadius: 99, fontSize: 13, color: colors.textPrimary },
-  sendBtn: {},
-  sendBtnInner: { width: 44, height: 44, borderRadius: 22, overflow: 'hidden' },
-  sendBtnGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  botBubble: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 18, borderBottomLeftRadius: 4, padding: 14, maxWidth: '85%', gap: 8 },
+  botTxt: { fontSize: 14, color: colors.textPrimary, lineHeight: 22 },
+  userBubble: { borderRadius: 18, borderBottomRightRadius: 4, padding: 14, maxWidth: '80%' },
+  userTxt: { fontSize: 14, color: '#fff', lineHeight: 22 },
+  sourceTxt: { fontSize: 10, color: colors.textSecondary, fontStyle: 'italic' },
+  helpfulBtn: { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 7, backgroundColor: colors.lavender, borderRadius: 99 },
+  helpfulTxt: { fontSize: 12, color: colors.purple, fontWeight: '700' },
+  markedTxt: { fontSize: 12, color: colors.green, fontWeight: '700' },
+  suggestWrap: { marginTop: 4, gap: 8 },
+  suggestLabel: { fontSize: 11, color: colors.textSecondary, fontWeight: '700' },
+  suggestRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { paddingHorizontal: 14, paddingVertical: 9, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.border, borderRadius: 99 },
+  chipTxt: { fontSize: 12, color: colors.purple, fontWeight: '600' },
+  inputBar: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, paddingHorizontal: 16, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
+  inputField: { flex: 1, padding: 12, paddingHorizontal: 16, borderWidth: 1.5, borderColor: colors.border, borderRadius: 24, fontSize: 14, color: colors.textPrimary, backgroundColor: colors.bg },
+  sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
 });

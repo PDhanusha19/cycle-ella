@@ -28,20 +28,59 @@ const getByCategory = (req, res) => {
 
 // SEARCH FAQ
 const searchFaq = (req, res) => {
-  const { q } = req.query;
-
+  const { q, category } = req.query;
   if (!q) return res.json([]);
 
+  const keywords = q.toLowerCase()
+    .split(' ')
+    .filter(w => w.length > 2)
+    .slice(0, 3);
+
+  if (keywords.length === 0) return res.json([]);
+
+  // Build scored query - question match scores higher than answer match
+  const conditions = keywords.map(() =>
+    `(question LIKE ? OR tags LIKE ?)`
+  ).join(' OR ');
+
+  const params = keywords.flatMap(k => [`%${k}%`, `%${k}%`]);
+
+  // First try: match in question or tags only
   db.query(
-    `SELECT * FROM faq 
-     WHERE question LIKE ? 
-     OR answer LIKE ? 
-     OR tags LIKE ?
-     LIMIT 5`,
-    [`%${q}%`, `%${q}%`, `%${q}%`],
+    `SELECT *, 
+      (CASE WHEN question LIKE ? THEN 10 ELSE 0 END +
+       CASE WHEN tags LIKE ? THEN 5 ELSE 0 END) as score
+     FROM faq 
+     WHERE ${conditions}
+     ORDER BY score DESC
+     LIMIT 1`,
+    [
+      `%${keywords[0]}%`,
+      `%${keywords[0]}%`,
+      ...params
+    ],
     (err, results) => {
       if (err) return res.status(500).json({ message: 'Database error' });
-      res.json(results);
+
+      if (results.length > 0) {
+        return res.json(results);
+      }
+
+      // Second try: match anywhere including answer
+      const fullConditions = keywords.map(() =>
+        `(question LIKE ? OR answer LIKE ? OR tags LIKE ?)`
+      ).join(' OR ');
+
+      const fullParams = keywords.flatMap(k => [`%${k}%`, `%${k}%`, `%${k}%`]);
+
+      db.query(
+        `SELECT * FROM faq WHERE ${fullConditions} LIMIT 1`,
+        fullParams,
+        (err2, results2) => {
+          if (err2) return res.status(500).json({ message: 'Database error' });
+          res.json(results2);
+        }
+      );
     }
   );
 };
