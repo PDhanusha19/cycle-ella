@@ -31,7 +31,7 @@ router.get('/analyse', protect, analyseFoodLog);
 const { searchFoods, getTodayLog, saveLog } = require('../controllers/foodController');
 
 // Search foods from database
-router.get('/search', protect, searchFoods);
+router.get('/search', searchFoods);
 
 // Get today's food log
 router.get('/today', protect, getTodayLog);
