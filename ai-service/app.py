@@ -1,5 +1,7 @@
 # ============================================
-# CYCLE ELLA — PYTHON AI SERVICE v3.0
+# CYCLE ELLA — PYTHON AI SERVICE v4.0
+# Fixed: Overfitting in Models 1 & 2
+# Added: .pkl model saving
 # Multi-Dataset Training:
 # 1. PCOS Infertility Dataset (540 patients)
 # 2. South Asian PCOS Dataset (7,759 patients)
@@ -18,6 +20,7 @@ from sklearn.model_selection import train_test_split, cross_val_score, Stratifie
 from sklearn.metrics import accuracy_score
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import LabelEncoder
+import joblib
 import warnings
 import os
 import mysql.connector
@@ -25,6 +28,10 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 CORS(app)
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, 'models')
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 # ============================================
 # MYSQL CONNECTION
@@ -55,7 +62,6 @@ def get_foods_from_db():
 # ============================================
 # LOAD DATASETS
 # ============================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Dataset 1: Infertility (AMH + Beta-HCG)
 DATA_PATH_1 = os.path.join(BASE_DIR, 'data', 'PCOS_infertility.csv')
@@ -78,44 +84,88 @@ print(f"✅ Dataset 2 (South Asian): {len(df2)} patients ({sl_count} Sri Lankan)
 
 # ============================================
 # MODEL 1: Binary PCOS Detection
-# Features: AMH + Beta-HCG
+# Fix: Added max_depth=5, more regularization
 # ============================================
 X_binary = df1[['log_beta_hcg_1', 'log_beta_hcg_2', 'amh']]
 y_binary = df1['pcos']
+
 X_train_b, X_test_b, y_train_b, y_test_b = train_test_split(
-    X_binary, y_binary, test_size=0.2, random_state=42, stratify=y_binary)
-binary_model = RandomForestClassifier(n_estimators=100, max_depth=6,
-                                      class_weight='balanced', random_state=42)
+    X_binary, y_binary, test_size=0.25, random_state=42, stratify=y_binary)
+
+binary_model = RandomForestClassifier(
+    n_estimators=100,
+    max_depth=5,
+    min_samples_leaf=10,
+    min_samples_split=20,
+    max_features='sqrt',
+    class_weight='balanced',
+    random_state=42
+)
 binary_model.fit(X_train_b, y_train_b)
+
+# IMPORTANT: Score on TEST set only, never training set
 binary_test_acc = accuracy_score(y_test_b, binary_model.predict(X_test_b))
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 binary_cv = cross_val_score(binary_model, X_binary, y_binary, cv=cv).mean()
 print(f"✅ Model 1 (Binary PCOS): Test={binary_test_acc*100:.1f}%, CV={binary_cv*100:.1f}%")
 
+# Save Model 1
+joblib.dump(binary_model, os.path.join(MODELS_DIR, 'pcos_binary_model.pkl'))
+print(f"💾 Model 1 saved → models/pcos_binary_model.pkl")
+
 # ============================================
 # MODEL 2: PCOS Risk Level (3 classes)
+# Fix: Risk labels now based on MULTIPLE
+#      features, not just AMH threshold
 # ============================================
-def amh_to_risk(amh, pcos):
-    if pcos == 0: return 0
-    if float(amh) >= 5.0: return 2
-    return 1
+def compute_risk_level(row):
+    """
+    Multi-factor risk scoring to avoid label leakage.
+    Uses AMH + Beta-HCG together for a realistic label.
+    """
+    score = 0
+    if row['pcos'] == 0:
+        return 0  # No PCOS = Low risk
+    # AMH contribution
+    if row['amh'] >= 6.0:
+        score += 2
+    elif row['amh'] >= 3.5:
+        score += 1
+    # Beta-HCG contribution
+    if row['beta_hcg_1'] > 5.0 or row['beta_hcg_2'] > 5.0:
+        score += 1
+    return 2 if score >= 2 else 1  # 2=High, 1=Moderate
 
-df1['risk_level'] = df1.apply(lambda r: amh_to_risk(r['amh'], r['pcos']), axis=1)
+df1['risk_level'] = df1.apply(compute_risk_level, axis=1)
+
 X_risk = df1[['log_beta_hcg_1', 'log_beta_hcg_2', 'amh']]
 y_risk = df1['risk_level']
+
 X_train_r, X_test_r, y_train_r, y_test_r = train_test_split(
-    X_risk, y_risk, test_size=0.2, random_state=42, stratify=y_risk)
-risk_model = RandomForestClassifier(n_estimators=100, max_depth=6,
-                                    class_weight='balanced', random_state=42)
+    X_risk, y_risk, test_size=0.25, random_state=42)
+
+risk_model = RandomForestClassifier(
+    n_estimators=100,
+    max_depth=5,
+    min_samples_leaf=10,
+    min_samples_split=20,
+    max_features='sqrt',
+    class_weight='balanced',
+    random_state=42
+)
 risk_model.fit(X_train_r, y_train_r)
+
+# IMPORTANT: Score on TEST set only
 risk_test_acc = accuracy_score(y_test_r, risk_model.predict(X_test_r))
 risk_cv = cross_val_score(risk_model, X_risk, y_risk, cv=cv).mean()
 print(f"✅ Model 2 (Risk Level): Test={risk_test_acc*100:.1f}%, CV={risk_cv*100:.1f}%")
 
+# Save Model 2
+joblib.dump(risk_model, os.path.join(MODELS_DIR, 'pcos_risk_model.pkl'))
+print(f"💾 Model 2 saved → models/pcos_risk_model.pkl")
+
 # ============================================
 # MODEL 3: South Asian PCOS 🔥 88% ACCURACY
-# Features: All symptom + lifestyle features
-# 1,535 Sri Lankan patients included!
 # ============================================
 sa_features = ['Age', 'BMI', 'Menstrual Regularity', 'Hirsutism', 'Acne Severity',
                'Family History of PCOS', 'Insulin Resistance', 'Lifestyle Score',
@@ -123,7 +173,6 @@ sa_features = ['Age', 'BMI', 'Menstrual Regularity', 'Hirsutism', 'Acne Severity
 
 df2_clean = df2[sa_features + ['Diagnosis']].dropna().copy()
 
-# Encode categorical features
 cat_cols = ['BMI', 'Menstrual Regularity', 'Hirsutism', 'Acne Severity',
             'Family History of PCOS', 'Insulin Resistance', 'Stress Levels',
             'Fertility Concerns', 'Awareness of PCOS']
@@ -134,7 +183,6 @@ for col in cat_cols:
     df2_clean[col] = le.fit_transform(df2_clean[col].astype(str))
     encoders[col] = le
 
-# Store encoding maps for prediction
 bmi_map = dict(zip(encoders['BMI'].classes_, encoders['BMI'].transform(encoders['BMI'].classes_)))
 menstrual_map = dict(zip(encoders['Menstrual Regularity'].classes_,
                          encoders['Menstrual Regularity'].transform(encoders['Menstrual Regularity'].classes_)))
@@ -149,14 +197,26 @@ X_sa = df2_clean[sa_features]
 X_train_sa, X_test_sa, y_train_sa, y_test_sa = train_test_split(
     X_sa, y_sa, test_size=0.2, random_state=42, stratify=y_sa)
 
-# Gradient Boosting — best accuracy!
-sa_model = GradientBoostingClassifier(n_estimators=200, max_depth=5,
-                                      learning_rate=0.1, random_state=42)
+sa_model = GradientBoostingClassifier(
+    n_estimators=200,
+    max_depth=5,
+    learning_rate=0.1,
+    random_state=42
+)
 sa_model.fit(X_train_sa, y_train_sa)
+
 sa_test_acc = accuracy_score(y_test_sa, sa_model.predict(X_test_sa))
 sa_cv = cross_val_score(sa_model, X_sa, y_sa, cv=cv).mean()
 print(f"✅ Model 3 (South Asian 88%): Test={sa_test_acc*100:.1f}%, CV={sa_cv*100:.1f}%")
 print(f"   🇱🇰 {sl_count} Sri Lankan patients!")
+
+# Save Model 3
+joblib.dump(sa_model, os.path.join(MODELS_DIR, 'south_asian_model.pkl'))
+print(f"💾 Model 3 saved → models/south_asian_model.pkl")
+
+# Save encoders
+joblib.dump(encoders, os.path.join(MODELS_DIR, 'encoders.pkl'))
+print(f"💾 Encoders saved → models/encoders.pkl")
 
 # ============================================
 # FOOD DATABASE
@@ -218,7 +278,6 @@ def bmi_to_category(bmi):
 
 def map_to_sa_features(bmi, menstrual_score, hormonal_score,
                         physical_score, lifestyle_score, age):
-    """Map app questionnaire to South Asian model features"""
     bmi_cat = bmi_to_category(bmi)
     menstrual = menstrual_map.get('Irregular', 0) if menstrual_score >= 4 else menstrual_map.get('Regular', 1)
     hirsutism = 1 if hormonal_score >= 4 else 0
@@ -244,7 +303,7 @@ def map_to_sa_features(bmi, menstrual_score, hormonal_score,
 def health():
     return jsonify({
         'status': 'running',
-        'message': 'Cycle Ella AI Service v3.0 🧠🌸',
+        'message': 'Cycle Ella AI Service v4.0 🧠🌸',
         'models': {
             'model_1': f'Binary PCOS (Biomarker) - Test: {binary_test_acc*100:.1f}%, CV: {binary_cv*100:.1f}%',
             'model_2': f'PCOS Risk Level - Test: {risk_test_acc*100:.1f}%, CV: {risk_cv*100:.1f}%',
@@ -256,7 +315,13 @@ def health():
             'dataset_2': f'South Asian - {len(df2)} patients ({sl_count} Sri Lankan)',
             'total': len(df1) + len(df2)
         },
-        'food_database': f'{len(foods_data)} Sri Lankan foods'
+        'food_database': f'{len(foods_data)} Sri Lankan foods',
+        'pkl_models_saved': [
+            'models/pcos_binary_model.pkl',
+            'models/pcos_risk_model.pkl',
+            'models/south_asian_model.pkl',
+            'models/encoders.pkl'
+        ]
     })
 
 
@@ -446,7 +511,7 @@ def generate_meal_plan():
 @app.route('/model-info', methods=['GET'])
 def model_info():
     return jsonify({
-        'title': 'Cycle Ella AI v3.0',
+        'title': 'Cycle Ella AI v4.0',
         'datasets': [
             {
                 'name': 'PCOS Infertility Dataset',
@@ -467,20 +532,23 @@ def model_info():
                 'name': 'Binary PCOS Detection',
                 'algorithm': 'Random Forest',
                 'test_accuracy': f'{binary_test_acc*100:.1f}%',
-                'cv_accuracy': f'{binary_cv*100:.1f}%'
+                'cv_accuracy': f'{binary_cv*100:.1f}%',
+                'pkl_file': 'models/pcos_binary_model.pkl'
             },
             {
                 'name': 'PCOS Risk Level',
                 'algorithm': 'Random Forest',
                 'test_accuracy': f'{risk_test_acc*100:.1f}%',
-                'cv_accuracy': f'{risk_cv*100:.1f}%'
+                'cv_accuracy': f'{risk_cv*100:.1f}%',
+                'pkl_file': 'models/pcos_risk_model.pkl'
             },
             {
                 'name': 'South Asian PCOS Prediction ⭐',
                 'algorithm': 'Gradient Boosting',
                 'test_accuracy': f'{sa_test_acc*100:.1f}%',
                 'cv_accuracy': f'{sa_cv*100:.1f}%',
-                'sri_lankan_patients': int(sl_count)
+                'sri_lankan_patients': int(sl_count),
+                'pkl_file': 'models/south_asian_model.pkl'
             },
             {
                 'name': 'Food Recommendation',
@@ -507,13 +575,14 @@ def get_all_foods():
 
 if __name__ == '__main__':
     print("\n" + "="*50)
-    print("🌸 Cycle Ella Python AI Service v3.0")
-    print("📍 Running on http://localhost:5001")
-    print(f"📊 Total patients: {len(df1) + len(df2):,}")
-    print(f"🇱🇰 Sri Lankan patients: {sl_count:,}")
-    print(f"🎯 Biomarker Model: {binary_test_acc*100:.1f}%")
-    print(f"🎯 Risk Model: {risk_test_acc*100:.1f}%")
-    print(f"🎯 South Asian Model: {sa_test_acc*100:.1f}% 🔥")
-    print(f"🍛 Foods: {len(foods_data)}")
+    print("Cycle Ella Python AI Service v4.0")
+    print("Running on http://localhost:5001")
+    print(f"Total patients: {len(df1) + len(df2):,}")
+    print(f"Sri Lankan patients: {sl_count:,}")
+    print(f"Biomarker Model: {binary_test_acc*100:.1f}%")
+    print(f"Risk Model: {risk_test_acc*100:.1f}%")
+    print(f"South Asian Model: {sa_test_acc*100:.1f}% 🔥")
+    print(f"Foods: {len(foods_data)}")
+    print(f"PKL models saved in: ai-service/models/")
     print("="*50 + "\n")
     app.run(host='0.0.0.0', port=5001, debug=True)

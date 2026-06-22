@@ -95,6 +95,18 @@ const getProfile = (req, res) => {
     }
   );
 };
+// GET BMI HISTORY
+const getBMIHistory = (req, res) => {
+  const user_id = req.user.id;
+  db.query(
+    'SELECT bmi, weight, recorded_at FROM user_measurements WHERE user_id = ? ORDER BY recorded_at DESC LIMIT 7',
+    [user_id],
+    (err, results) => {
+      if (err) return res.status(500).json({ message: 'Database error' });
+      res.json(results);
+    }
+  );
+};
 
 // UPDATE USER PROFILE
 const updateProfile = (req, res) => {
@@ -124,5 +136,6 @@ module.exports = {
   saveMeasurements,
   getMeasurements,
   getProfile,
-  updateProfile
+  updateProfile,
+   getBMIHistory 
 };

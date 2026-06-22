@@ -7,7 +7,11 @@ const {
   getDailySummary,
   deleteFood,
   getWeeklySummary,
-  analyseFoodLog
+  analyseFoodLog,
+  searchFoods,
+  getTodayLog,
+  saveLog,
+  getWeeklyCalories
 } = require('../controllers/foodController');
 
 // Log food item
@@ -28,9 +32,7 @@ router.get('/weekly', protect, getWeeklySummary);
 // Analyse food log for tips
 router.get('/analyse', protect, analyseFoodLog);
 
-const { searchFoods, getTodayLog, saveLog } = require('../controllers/foodController');
-
-// Search foods from database
+// Search foods - public
 router.get('/search', searchFoods);
 
 // Get today's food log
@@ -38,5 +40,8 @@ router.get('/today', protect, getTodayLog);
 
 // Save food log
 router.post('/save-log', protect, saveLog);
+
+// Weekly calories for progress chart
+router.get('/weekly-calories', protect, getWeeklyCalories);
 
 module.exports = router;
