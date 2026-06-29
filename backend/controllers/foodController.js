@@ -169,8 +169,12 @@ const searchFoods = (req, res) => {
   if (!q) return res.json({ items: [] });
 
   db.query(
-    'SELECT * FROM foods WHERE name LIKE ? LIMIT 10',
-    [`%${q}%`],
+    `SELECT * FROM foods 
+     WHERE name LIKE ? 
+     OR sinhala_name LIKE ? 
+     OR tamil_name LIKE ?
+     LIMIT 10`,
+    [`%${q}%`, `%${q}%`, `%${q}%`],
     (err, results) => {
       if (err) return res.status(500).json({ message: 'Database error' });
       res.json({ items: results });

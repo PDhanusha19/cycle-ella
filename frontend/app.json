@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "Cycle Ella",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -20,10 +20,20 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.cycleella.app",
+      "usesCleartextTraffic": true
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ea5e9dca-e85b-4758-910f-1b2e5f17a281"
+      }
+    },
+    "plugins": [
+      "expo-font"
+    ]
   }
 }
