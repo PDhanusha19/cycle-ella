@@ -13,30 +13,32 @@ const DEFAULT_DOCTORS = [
 
 function DoctorCard({ doc }) {
   const handleCall = () => {
-    if (doc.phone) Linking.openURL(`tel:${doc.phone}`);
-    else Alert.alert('Call', `Calling ${doc.name}...`);
+    if (doc?.phone) Linking.openURL(`tel:${doc.phone}`);
+    else Alert.alert('Call', `Calling ${doc?.name || 'doctor'}...`);
   };
-  const handleMap = () => Alert.alert('Directions', `Opening map for ${doc.hospital}`);
+  const handleMap = () => Alert.alert('Directions', `Opening map for ${doc?.hospital || 'hospital'}`);
+
+  if (!doc) return null;
 
   return (
     <View style={s.docCard}>
       <View style={s.docTop}>
-        <LinearGradient colors={doc.gradColors} style={s.docAvatar} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-          <Text style={s.docInitials}>{doc.initials}</Text>
+        <LinearGradient colors={doc.gradColors || ['#E5457A', '#9B4DB5']} style={s.docAvatar} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+          <Text style={s.docInitials}>{doc.initials || (doc.name ? doc.name.charAt(0) : '?')}</Text>
         </LinearGradient>
         <View style={{ flex: 1 }}>
-          <Text style={s.docName}>{doc.name}</Text>
-          <Text style={s.docSpec}>{doc.spec}</Text>
-          <Text style={s.docHospital}>{doc.hospital}</Text>
+          <Text style={s.docName}>{doc.name || 'Unknown Doctor'}</Text>
+          <Text style={s.docSpec}>{doc.spec || doc.specialization || 'Gynecologist'}</Text>
+          <Text style={s.docHospital}>{doc.hospital || ''}</Text>
         </View>
       </View>
       <View style={s.docBadges}>
         <View style={[s.badge, { backgroundColor: colors.lavender }]}>
-          <Text style={[s.badgeTxt, { color: colors.purple }]}>📍 {doc.district}</Text>
+          <Text style={[s.badgeTxt, { color: colors.purple }]}>📍 {doc.district || 'Unknown'}</Text>
         </View>
         <View style={[s.badge, { backgroundColor: doc.type === 'Government' ? colors.blueBg : colors.greenBg }]}>
           <Text style={[s.badgeTxt, { color: doc.type === 'Government' ? '#1565c0' : '#1a8a5c' }]}>
-            {doc.type === 'Government' ? '🏥' : '💰'} {doc.fee}
+            {doc.type === 'Government' ? '🏥' : '💰'} {doc.fee || 'N/A'}
           </Text>
         </View>
       </View>
@@ -54,23 +56,34 @@ function DoctorCard({ doc }) {
 
 export default function GynoScreen({ navigation }) {
   const [search, setSearch] = useState('');
-  const [district, setDistrict] = useState('Colombo');
+  const [district, setDistrict] = useState('All');
   const [doctors, setDoctors] = useState(DEFAULT_DOCTORS);
 
   useEffect(() => {
     const load = async () => {
       try {
         const res = await api.get('/gyno');
-        if (res.data?.length) setDoctors(res.data);
-      } catch (_) {}
+        if (Array.isArray(res.data) && res.data.length > 0) {
+          setDoctors(res.data);
+        }
+      } catch (_) {
+        // Keep default doctors on error
+      }
     };
     load();
   }, []);
 
-  const filtered = doctors.filter(d =>
-    (d.name.toLowerCase().includes(search.toLowerCase()) || d.hospital.toLowerCase().includes(search.toLowerCase())) &&
-    (district === 'All' || d.district === district)
-  );
+  const safeDoctors = Array.isArray(doctors) ? doctors : DEFAULT_DOCTORS;
+
+  const filtered = safeDoctors.filter(d => {
+    if (!d) return false;
+    const name = (d.name || '').toLowerCase();
+    const hospital = (d.hospital || '').toLowerCase();
+    const searchLower = search.toLowerCase();
+    const matchesSearch = name.includes(searchLower) || hospital.includes(searchLower);
+    const matchesDistrict = district === 'All' || d.district === district;
+    return matchesSearch && matchesDistrict;
+  });
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
@@ -102,7 +115,7 @@ export default function GynoScreen({ navigation }) {
 
         {filtered.length === 0 ? (
           <Text style={s.emptyTxt}>No doctors found matching your search.</Text>
-        ) : filtered.map(doc => <DoctorCard key={doc.id} doc={doc} />)}
+        ) : filtered.map((doc, idx) => <DoctorCard key={doc?.id || idx} doc={doc} />)}
       </ScrollView>
     </SafeAreaView>
   );
