@@ -1,588 +1,233 @@
 # ============================================
-# CYCLE ELLA — PYTHON AI SERVICE v4.0
-# Fixed: Overfitting in Models 1 & 2
-# Added: .pkl model saving
-# Multi-Dataset Training:
-# 1. PCOS Infertility Dataset (540 patients)
-# 2. South Asian PCOS Dataset (7,759 patients)
-#    Including 1,535 Sri Lankan patients!
-# Total: 8,299 patients
-# Best Accuracy: 88.0%
+# CYCLE ELLA — PYTHON AI SERVICE v5.0 (clean)
+# Model 1: PCOS Detector + Risk Level
+#   - Symptom-only questions, no lab test needed
+#   - Trained on 541 real patients (Kerala, India)
+#   - ~78% accuracy, catches ~83% of real PCOS cases
 # Port: 5001
 # ============================================
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pandas as pd
-import numpy as np
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
-from sklearn.metrics import accuracy_score
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import LabelEncoder
 import joblib
-import warnings
+import json
 import os
-import mysql.connector
-warnings.filterwarnings('ignore')
+import pandas as pd
+from food_recommender import recommend_foods, generate_meal_plan, search_foods, get_all_foods, find_similar_foods
 
 app = Flask(__name__)
 CORS(app)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(BASE_DIR, 'models')
-os.makedirs(MODELS_DIR, exist_ok=True)
+MODELS_DIR = os.path.join(BASE_DIR, "models")
 
 # ============================================
-# MYSQL CONNECTION
+# LOAD MODEL 1 (Logistic Regression)
 # ============================================
-def get_db_connection():
-    return mysql.connector.connect(
-        host='localhost',
-        user='root',
-        password='cycleella',
-        database='cycleella'
-    )
+pcos_model = joblib.load(os.path.join(MODELS_DIR, "pcos_model_logistic_regression.pkl"))
+feature_scaler = joblib.load(os.path.join(MODELS_DIR, "pcos_feature_scaler.pkl"))
+with open(os.path.join(MODELS_DIR, "pcos_model_metadata.json")) as f:
+    pcos_metadata = json.load(f)
 
-def get_foods_from_db():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute('SELECT * FROM foods')
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        result = pd.DataFrame(rows)
-        print(f"✅ Foods loaded from MySQL: {len(result)} foods")
-        return result
-    except Exception as e:
-        print(f"❌ MySQL failed: {e}")
-        return None
+pcos_metrics = pcos_metadata["metrics"]
+FEATURE_ORDER = pcos_metadata["feature_order"]
+print(f"Model 1 loaded (Logistic Regression). Test accuracy: {pcos_metrics['test_accuracy']}%")
 
 # ============================================
-# LOAD DATASETS
+# HELPERS
 # ============================================
+def compute_bmi(weight_kg, height_cm):
+    height_m = height_cm / 100
+    return round(weight_kg / (height_m ** 2), 1)
 
-# Dataset 1: Infertility (AMH + Beta-HCG)
-DATA_PATH_1 = os.path.join(BASE_DIR, 'data', 'PCOS_infertility.csv')
-df1 = pd.read_csv(DATA_PATH_1)
-df1.columns = ['sl_no', 'patient_id', 'pcos', 'beta_hcg_1', 'beta_hcg_2', 'amh']
-df1['amh'] = pd.to_numeric(df1['amh'], errors='coerce')
-df1['beta_hcg_1'] = pd.to_numeric(df1['beta_hcg_1'], errors='coerce')
-df1['beta_hcg_2'] = pd.to_numeric(df1['beta_hcg_2'], errors='coerce')
-df1 = df1.dropna()
-df1['log_beta_hcg_1'] = np.log1p(df1['beta_hcg_1'])
-df1['log_beta_hcg_2'] = np.log1p(df1['beta_hcg_2'])
-print(f"✅ Dataset 1 (Infertility): {len(df1)} patients")
 
-# Dataset 2: South Asian PCOS
-DATA_PATH_2 = os.path.join(BASE_DIR, 'data', 'pcos_prediction_dataset.csv')
-df2_full = pd.read_csv(DATA_PATH_2)
-df2 = df2_full[df2_full['Country'].isin(['Sri Lanka','India','Pakistan','Bangladesh','Nepal'])].copy()
-sl_count = len(df2[df2['Country'] == 'Sri Lanka'])
-print(f"✅ Dataset 2 (South Asian): {len(df2)} patients ({sl_count} Sri Lankan)")
+def get_risk_level(probability):
+    if probability < 0.33:
+        return "Low"
+    elif probability < 0.66:
+        return "Medium"
+    else:
+        return "High"
 
-# ============================================
-# MODEL 1: Binary PCOS Detection
-# Fix: Added max_depth=5, more regularization
-# ============================================
-X_binary = df1[['log_beta_hcg_1', 'log_beta_hcg_2', 'amh']]
-y_binary = df1['pcos']
 
-X_train_b, X_test_b, y_train_b, y_test_b = train_test_split(
-    X_binary, y_binary, test_size=0.25, random_state=42, stratify=y_binary)
+def yn_to_int(value):
+    """Accepts True/False, 'Yes'/'No', 1/0 and converts to 1/0."""
+    if isinstance(value, str):
+        return 1 if value.strip().lower() in ("yes", "y", "true", "1") else 0
+    return int(bool(value))
 
-binary_model = RandomForestClassifier(
-    n_estimators=100,
-    max_depth=5,
-    min_samples_leaf=10,
-    min_samples_split=20,
-    max_features='sqrt',
-    class_weight='balanced',
-    random_state=42
-)
-binary_model.fit(X_train_b, y_train_b)
 
-# IMPORTANT: Score on TEST set only, never training set
-binary_test_acc = accuracy_score(y_test_b, binary_model.predict(X_test_b))
-cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-binary_cv = cross_val_score(binary_model, X_binary, y_binary, cv=cv).mean()
-print(f"✅ Model 1 (Binary PCOS): Test={binary_test_acc*100:.1f}%, CV={binary_cv*100:.1f}%")
-
-# Save Model 1
-joblib.dump(binary_model, os.path.join(MODELS_DIR, 'pcos_binary_model.pkl'))
-print(f"💾 Model 1 saved → models/pcos_binary_model.pkl")
-
-# ============================================
-# MODEL 2: PCOS Risk Level (3 classes)
-# Fix: Risk labels now based on MULTIPLE
-#      features, not just AMH threshold
-# ============================================
-def compute_risk_level(row):
+def build_feature_row(data):
     """
-    Multi-factor risk scoring to avoid label leakage.
-    Uses AMH + Beta-HCG together for a realistic label.
+    Turns the JSON the app sends into the exact 13 numbers the model
+    expects, in the exact order it expects them.
     """
-    score = 0
-    if row['pcos'] == 0:
-        return 0  # No PCOS = Low risk
-    # AMH contribution
-    if row['amh'] >= 6.0:
-        score += 2
-    elif row['amh'] >= 3.5:
-        score += 1
-    # Beta-HCG contribution
-    if row['beta_hcg_1'] > 5.0 or row['beta_hcg_2'] > 5.0:
-        score += 1
-    return 2 if score >= 2 else 1  # 2=High, 1=Moderate
+    weight = float(data.get("weight_kg"))
+    height = float(data.get("height_cm"))
+    bmi = data.get("bmi")
+    bmi = float(bmi) if bmi is not None else compute_bmi(weight, height)
 
-df1['risk_level'] = df1.apply(compute_risk_level, axis=1)
+    cycle_regular = str(data.get("cycle_regularity", "Regular")).strip().lower()
+    cycle_code = 2 if cycle_regular.startswith("reg") else 4
 
-X_risk = df1[['log_beta_hcg_1', 'log_beta_hcg_2', 'amh']]
-y_risk = df1['risk_level']
+    row = {
+        "Age (yrs)": float(data.get("age")),
+        "Weight (Kg)": weight,
+        "Height(Cm)": height,
+        "BMI": bmi,
+        "Cycle(R/I)": cycle_code,
+        "Cycle length(days)": float(data.get("period_duration_days", 5)),
+        "Weight gain(Y/N)": yn_to_int(data.get("weight_gain", False)),
+        "hair growth(Y/N)": yn_to_int(data.get("hair_growth", False)),
+        "Skin darkening (Y/N)": yn_to_int(data.get("skin_darkening", False)),
+        "Hair loss(Y/N)": yn_to_int(data.get("hair_loss", False)),
+        "Pimples(Y/N)": yn_to_int(data.get("pimples", False)),
+        "Fast food (Y/N)": yn_to_int(data.get("fast_food", False)),
+        "Reg.Exercise(Y/N)": yn_to_int(data.get("regular_exercise", False)),
+    }
+    return pd.DataFrame([[row[col] for col in FEATURE_ORDER]], columns=FEATURE_ORDER)
 
-X_train_r, X_test_r, y_train_r, y_test_r = train_test_split(
-    X_risk, y_risk, test_size=0.25, random_state=42)
-
-risk_model = RandomForestClassifier(
-    n_estimators=100,
-    max_depth=5,
-    min_samples_leaf=10,
-    min_samples_split=20,
-    max_features='sqrt',
-    class_weight='balanced',
-    random_state=42
-)
-risk_model.fit(X_train_r, y_train_r)
-
-# IMPORTANT: Score on TEST set only
-risk_test_acc = accuracy_score(y_test_r, risk_model.predict(X_test_r))
-risk_cv = cross_val_score(risk_model, X_risk, y_risk, cv=cv).mean()
-print(f"✅ Model 2 (Risk Level): Test={risk_test_acc*100:.1f}%, CV={risk_cv*100:.1f}%")
-
-# Save Model 2
-joblib.dump(risk_model, os.path.join(MODELS_DIR, 'pcos_risk_model.pkl'))
-print(f"💾 Model 2 saved → models/pcos_risk_model.pkl")
-
-# ============================================
-# MODEL 3: South Asian PCOS 🔥 88% ACCURACY
-# ============================================
-sa_features = ['Age', 'BMI', 'Menstrual Regularity', 'Hirsutism', 'Acne Severity',
-               'Family History of PCOS', 'Insulin Resistance', 'Lifestyle Score',
-               'Stress Levels', 'Fertility Concerns', 'Awareness of PCOS']
-
-df2_clean = df2[sa_features + ['Diagnosis']].dropna().copy()
-
-cat_cols = ['BMI', 'Menstrual Regularity', 'Hirsutism', 'Acne Severity',
-            'Family History of PCOS', 'Insulin Resistance', 'Stress Levels',
-            'Fertility Concerns', 'Awareness of PCOS']
-
-encoders = {}
-for col in cat_cols:
-    le = LabelEncoder()
-    df2_clean[col] = le.fit_transform(df2_clean[col].astype(str))
-    encoders[col] = le
-
-bmi_map = dict(zip(encoders['BMI'].classes_, encoders['BMI'].transform(encoders['BMI'].classes_)))
-menstrual_map = dict(zip(encoders['Menstrual Regularity'].classes_,
-                         encoders['Menstrual Regularity'].transform(encoders['Menstrual Regularity'].classes_)))
-stress_map = dict(zip(encoders['Stress Levels'].classes_,
-                      encoders['Stress Levels'].transform(encoders['Stress Levels'].classes_)))
-acne_map = dict(zip(encoders['Acne Severity'].classes_,
-                    encoders['Acne Severity'].transform(encoders['Acne Severity'].classes_)))
-
-y_sa = (df2_clean['Diagnosis'] == 'Yes').astype(int)
-X_sa = df2_clean[sa_features]
-
-X_train_sa, X_test_sa, y_train_sa, y_test_sa = train_test_split(
-    X_sa, y_sa, test_size=0.2, random_state=42, stratify=y_sa)
-
-sa_model = GradientBoostingClassifier(
-    n_estimators=200,
-    max_depth=5,
-    learning_rate=0.1,
-    random_state=42
-)
-sa_model.fit(X_train_sa, y_train_sa)
-
-sa_test_acc = accuracy_score(y_test_sa, sa_model.predict(X_test_sa))
-sa_cv = cross_val_score(sa_model, X_sa, y_sa, cv=cv).mean()
-print(f"✅ Model 3 (South Asian 88%): Test={sa_test_acc*100:.1f}%, CV={sa_cv*100:.1f}%")
-print(f"   🇱🇰 {sl_count} Sri Lankan patients!")
-
-# Save Model 3
-joblib.dump(sa_model, os.path.join(MODELS_DIR, 'south_asian_model.pkl'))
-print(f"💾 Model 3 saved → models/south_asian_model.pkl")
-
-# Save encoders
-joblib.dump(encoders, os.path.join(MODELS_DIR, 'encoders.pkl'))
-print(f"💾 Encoders saved → models/encoders.pkl")
-
-# ============================================
-# FOOD DATABASE
-# ============================================
-mysql_foods = get_foods_from_db()
-if mysql_foods is not None and len(mysql_foods) > 0:
-    foods_data = mysql_foods
-else:
-    print("⚠️ Using backup food database")
-    foods_data = pd.DataFrame([
-        {'id':1,'name':'Red Rice','calories':216,'protein':5,'carbs':45,'fats':1.6,'category':'carbs','glycemic_index':'medium','pcos_friendly':True},
-        {'id':2,'name':'Dhal Curry','calories':220,'protein':12,'carbs':35,'fats':3,'category':'protein','glycemic_index':'low','pcos_friendly':True},
-        {'id':3,'name':'Chicken Curry','calories':280,'protein':25,'carbs':5,'fats':15,'category':'protein','glycemic_index':'low','pcos_friendly':True},
-        {'id':4,'name':'Gotukola Sambol','calories':45,'protein':2,'carbs':8,'fats':0.5,'category':'vegetable','glycemic_index':'low','pcos_friendly':True},
-        {'id':5,'name':'Coconut Water','calories':46,'protein':1.7,'carbs':9,'fats':0.5,'category':'drink','glycemic_index':'low','pcos_friendly':True},
-        {'id':6,'name':'Guava','calories':68,'protein':2.6,'carbs':14,'fats':1,'category':'fruit','glycemic_index':'low','pcos_friendly':True},
-        {'id':7,'name':'Almonds','calories':164,'protein':6,'carbs':6,'fats':14,'category':'snack','glycemic_index':'low','pcos_friendly':True},
-        {'id':8,'name':'Kola Kenda','calories':80,'protein':3,'carbs':15,'fats':1,'category':'traditional','glycemic_index':'low','pcos_friendly':True},
-    ])
-
-print(f"✅ Food database ready: {len(foods_data)} foods")
-
-# ============================================
-# USER PROFILES FOR COLLABORATIVE FILTERING
-# ============================================
-user_profiles = pd.DataFrame([
-    {'user_id':'u1','bmi':22,'risk_level':0,'phase':'Menstrual','health_improvement':8,'liked_foods':[2,3,4,5,1,6]},
-    {'user_id':'u2','bmi':27,'risk_level':1,'phase':'Luteal','health_improvement':6,'liked_foods':[2,7,4,1,6,5]},
-    {'user_id':'u3','bmi':23,'risk_level':1,'phase':'Follicular','health_improvement':10,'liked_foods':[1,3,4,6,5,7]},
-    {'user_id':'u4','bmi':29,'risk_level':2,'phase':'Luteal','health_improvement':7,'liked_foods':[2,3,4,5,1,7]},
-    {'user_id':'u5','bmi':21,'risk_level':0,'phase':'Ovulatory','health_improvement':9,'liked_foods':[1,3,6,5,2,7]},
-    {'user_id':'u6','bmi':18,'risk_level':0,'phase':'Follicular','health_improvement':5,'liked_foods':[1,2,3,6,5,8]},
-    {'user_id':'u7','bmi':26,'risk_level':1,'phase':'Menstrual','health_improvement':7,'liked_foods':[1,2,4,5,1,7]},
-    {'user_id':'u8','bmi':31,'risk_level':2,'phase':'Luteal','health_improvement':6,'liked_foods':[2,3,4,7,5,8]},
-    {'user_id':'u9','bmi':24,'risk_level':1,'phase':'Ovulatory','health_improvement':8,'liked_foods':[1,3,6,5,2,7]},
-    {'user_id':'u10','bmi':20,'risk_level':0,'phase':'Follicular','health_improvement':9,'liked_foods':[1,2,4,6,5,3]},
-])
-
-# ============================================
-# HELPER FUNCTIONS
-# ============================================
-def get_bmi_category(bmi):
-    if bmi < 18.5: return 0
-    if bmi < 25: return 1
-    if bmi < 30: return 2
-    return 3
-
-def get_risk_score(risk_level):
-    return {'Low': 0, 'Moderate': 1, 'High': 2}.get(risk_level, 1)
-
-def get_phase_score(phase):
-    return {'Menstrual': 0, 'Follicular': 1, 'Ovulatory': 2, 'Luteal': 3}.get(phase, 1)
-
-def bmi_to_category(bmi):
-    if bmi < 18.5: return bmi_map.get('Underweight', 3)
-    if bmi < 25: return bmi_map.get('Normal', 1)
-    if bmi < 30: return bmi_map.get('Overweight', 2)
-    return bmi_map.get('Obese', 0)
-
-def map_to_sa_features(bmi, menstrual_score, hormonal_score,
-                        physical_score, lifestyle_score, age):
-    bmi_cat = bmi_to_category(bmi)
-    menstrual = menstrual_map.get('Irregular', 0) if menstrual_score >= 4 else menstrual_map.get('Regular', 1)
-    hirsutism = 1 if hormonal_score >= 4 else 0
-    if physical_score <= 3: acne = acne_map.get('Mild', 0)
-    elif physical_score <= 7: acne = acne_map.get('Moderate', 1)
-    else: acne = acne_map.get('Severe', 2)
-    lifestyle = max(1, min(10, int(lifestyle_score * 10/12) + 1))
-    if lifestyle_score >= 8: stress = stress_map.get('High', 0)
-    elif lifestyle_score <= 3: stress = stress_map.get('Low', 1)
-    else: stress = stress_map.get('Medium', 2)
-    family = 0
-    insulin = 0
-    fertility = 1 if menstrual_score >= 6 else 0
-    awareness = 1
-    return [age, bmi_cat, menstrual, hirsutism, acne,
-            family, insulin, lifestyle, stress, fertility, awareness]
 
 # ============================================
 # API ROUTES
 # ============================================
-
-@app.route('/health', methods=['GET'])
+@app.route("/health", methods=["GET"])
 def health():
     return jsonify({
-        'status': 'running',
-        'message': 'Cycle Ella AI Service v4.0 🧠🌸',
-        'models': {
-            'model_1': f'Binary PCOS (Biomarker) - Test: {binary_test_acc*100:.1f}%, CV: {binary_cv*100:.1f}%',
-            'model_2': f'PCOS Risk Level - Test: {risk_test_acc*100:.1f}%, CV: {risk_cv*100:.1f}%',
-            'model_3': f'South Asian PCOS - Test: {sa_test_acc*100:.1f}%, CV: {sa_cv*100:.1f}%',
-            'model_4': 'Collaborative Filtering + Cosine Similarity',
+        "status": "running",
+        "message": "Cycle Ella AI Service v5.0",
+        "model_1": {
+            "name": "PCOS Detector + Risk Level (Logistic Regression)",
+            "test_accuracy": f"{pcos_metrics['test_accuracy']}%",
+            "recall": f"{pcos_metrics['recall']}% (catches this % of real cases)",
+            "trained_on": pcos_metadata["trained_on"],
         },
-        'datasets': {
-            'dataset_1': f'PCOS Infertility - {len(df1)} patients',
-            'dataset_2': f'South Asian - {len(df2)} patients ({sl_count} Sri Lankan)',
-            'total': len(df1) + len(df2)
-        },
-        'food_database': f'{len(foods_data)} Sri Lankan foods',
-        'pkl_models_saved': [
-            'models/pcos_binary_model.pkl',
-            'models/pcos_risk_model.pkl',
-            'models/south_asian_model.pkl',
-            'models/encoders.pkl'
-        ]
     })
 
 
-@app.route('/predict-risk', methods=['POST'])
-def predict_risk():
+@app.route("/predict-pcos", methods=["POST"])
+def predict_pcos():
+    """
+    Expects JSON like:
+    {
+      "age": 24,
+      "weight_kg": 65,
+      "height_cm": 160,
+      "cycle_regularity": "Irregular",
+      "period_duration_days": 6,
+      "weight_gain": true,
+      "hair_growth": true,
+      "skin_darkening": false,
+      "hair_loss": false,
+      "pimples": true,
+      "fast_food": true,
+      "regular_exercise": false
+    }
+    """
     try:
         data = request.get_json()
-        bmi = float(data.get('bmi', 22))
-        menstrual_score = float(data.get('menstrual_score', 0))
-        hormonal_score = float(data.get('hormonal_score', 0))
-        physical_score = float(data.get('physical_score', 0))
-        lifestyle_score = float(data.get('lifestyle_score', 0))
-        age = float(data.get('age', 25))
+        features = build_feature_row(data)
+        features_scaled = feature_scaler.transform(features)
 
-        sa_input = map_to_sa_features(bmi, menstrual_score, hormonal_score,
-                                       physical_score, lifestyle_score, age)
-        prediction = sa_model.predict([sa_input])[0]
-        probabilities = sa_model.predict_proba([sa_input])[0]
+        prediction = pcos_model.predict(features_scaled)[0]
+        probabilities = pcos_model.predict_proba(features_scaled)[0]
+        pcos_probability = float(probabilities[1])
 
-        risk_level = 'High' if prediction == 1 else 'Low'
-        confidence = round(float(max(probabilities)) * 100, 1)
+        risk_level = get_risk_level(pcos_probability)
 
-        feature_names = ['Age', 'BMI', 'Menstrual', 'Hirsutism', 'Acne',
-                        'Family History', 'Insulin', 'Lifestyle', 'Stress',
-                        'Fertility', 'Awareness']
-        top_factor = feature_names[int(np.argmax(sa_model.feature_importances_))]
+        # Logistic Regression doesn't have feature_importances_ like Random
+        # Forest does — instead it has coefficients (weights). We rank by
+        # the size of the weight, ignoring +/- direction, to find what
+        # mattered most for this prediction.
+        coefficients = list(zip(FEATURE_ORDER, pcos_model.coef_[0]))
+        coefficients.sort(key=lambda x: -abs(x[1]))
+        top_factors = [f[0] for f in coefficients[:3]]
 
         return jsonify({
-            'risk_level': risk_level,
-            'confidence': confidence,
-            'probabilities': {
-                'no_pcos': round(float(probabilities[0]) * 100, 1),
-                'pcos': round(float(probabilities[1]) * 100, 1)
-            },
-            'top_risk_factor': top_factor,
-            'algorithm': 'Gradient Boosting Classifier (scikit-learn)',
-            'dataset': f'South Asian PCOS - {sl_count} Sri Lankan patients',
-            'model_test_accuracy': f'{sa_test_acc*100:.1f}%',
-            'model_cv_accuracy': f'{sa_cv*100:.1f}%'
+            "pcos_detected": bool(prediction),
+            "pcos_probability_percent": round(pcos_probability * 100, 1),
+            "risk_level": risk_level,
+            "top_contributing_factors": top_factors,
+            "model_accuracy": f"{pcos_metrics['test_accuracy']}%",
+            "disclaimer": "This is a screening tool, not a medical diagnosis. Please consult a doctor for confirmation.",
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route('/predict-pcos-biomarker', methods=['POST'])
-def predict_pcos_biomarker():
+# ============================================
+# MODEL 2 — PERSONALIZED FOOD RECOMMENDATIONS
+# Content-based filtering (no fake user data)
+# ============================================
+@app.route("/recommend-foods", methods=["POST"])
+def recommend_foods_endpoint():
+    """
+    Expects JSON like:
+    {
+      "risk_level": "High",
+      "phase": "Luteal",
+      "bmi": 27,
+      "diabetes": false,
+      "cholesterol": false
+    }
+    """
     try:
         data = request.get_json()
-        amh = float(data.get('amh', 2.0))
-        beta_hcg_1 = float(data.get('beta_hcg_1', 1.99))
-        beta_hcg_2 = float(data.get('beta_hcg_2', 1.99))
-        features = [[np.log1p(beta_hcg_1), np.log1p(beta_hcg_2), amh]]
-        prediction = binary_model.predict(features)[0]
-        probabilities = binary_model.predict_proba(features)[0]
-        return jsonify({
-            'pcos_detected': bool(prediction),
-            'pcos_probability': round(float(probabilities[1]) * 100, 1),
-            'no_pcos_probability': round(float(probabilities[0]) * 100, 1),
-            'amh_level': amh,
-            'amh_interpretation': 'High — PCOS indicator' if amh > 3.4 else 'Normal range',
-            'algorithm': 'Random Forest - Biomarker Model',
-            'dataset': '540 real PCOS patients (Kaggle)',
-            'test_accuracy': f'{binary_test_acc*100:.1f}%',
-            'cross_validation': f'{binary_cv*100:.1f}%'
-        })
+        result = recommend_foods(
+            risk_level=data.get("risk_level", "Medium"),
+            phase=data.get("phase", "Follicular"),
+            bmi=float(data.get("bmi", 22)),
+            diabetes=data.get("diabetes", "None"),
+            cholesterol=bool(data.get("cholesterol", False)),
+            top_n=int(data.get("top_n", 8)),
+        )
+        return jsonify(result)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route('/recommend-foods', methods=['POST'])
-def recommend_foods():
+@app.route("/meal-plan", methods=["POST"])
+def meal_plan_endpoint():
     try:
         data = request.get_json()
-        bmi = float(data.get('bmi', 22))
-        risk_level = data.get('risk_level', 'Moderate')
-        phase = data.get('phase', 'Follicular')
-        diabetes = data.get('diabetes', 'No')
-        cholesterol = data.get('cholesterol', 'No')
-
-        current_user = np.array([get_bmi_category(bmi), get_risk_score(risk_level), get_phase_score(phase)])
-        profile_vectors = [np.array([get_bmi_category(u['bmi']), u['risk_level'], get_phase_score(u['phase'])]) for _, u in user_profiles.iterrows()]
-        similarities = cosine_similarity([current_user], np.array(profile_vectors))[0]
-        top_indices = similarities.argsort()[-3:][::-1]
-        top_users = user_profiles.iloc[top_indices]
-
-        food_scores = {}
-        for i, (_, user) in enumerate(top_users.iterrows()):
-            sim = similarities[top_indices[i]]
-            for food_id in user['liked_foods']:
-                food_scores[food_id] = food_scores.get(food_id, 0) + sim * user['health_improvement']
-
-        recommendations = []
-        for food_id, score in sorted(food_scores.items(), key=lambda x: x[1], reverse=True):
-            food = foods_data[foods_data['id'] == food_id]
-            if food.empty: continue
-            food = food.iloc[0]
-            if diabetes == 'Yes' and food['carbs'] > 40: continue
-            if cholesterol == 'Yes' and food['fats'] > 12: continue
-            recommendations.append({
-                'id': int(food['id']), 'name': str(food['name']),
-                'calories': int(food['calories']), 'protein': float(food['protein']),
-                'carbs': float(food['carbs']), 'fats': float(food['fats']),
-                'category': str(food['category']), 'pcos_friendly': bool(food['pcos_friendly']),
-                'glycemic_index': str(food['glycemic_index']), 'score': round(float(score), 2)
-            })
-            if len(recommendations) >= 8: break
-
-        if len(recommendations) < 5:
-            for _, food in foods_data[foods_data['pcos_friendly'] == True].head(8).iterrows():
-                if len(recommendations) >= 8: break
-                if not any(r['id'] == food['id'] for r in recommendations):
-                    recommendations.append({
-                        'id': int(food['id']), 'name': str(food['name']),
-                        'calories': int(food['calories']), 'protein': float(food['protein']),
-                        'carbs': float(food['carbs']), 'fats': float(food['fats']),
-                        'category': str(food['category']), 'pcos_friendly': bool(food['pcos_friendly']),
-                        'glycemic_index': str(food['glycemic_index']), 'score': 0.0
-                    })
-
-        return jsonify({
-            'recommendations': recommendations,
-            'similar_users_found': int(len(top_users)),
-            'algorithm': 'Collaborative Filtering + Cosine Similarity (scikit-learn)',
-            'phase_context': phase,
-            'risk_level': risk_level
-        })
+        result = generate_meal_plan(
+            risk_level=data.get("risk_level", "Medium"),
+            phase=data.get("phase", "Follicular"),
+            bmi=float(data.get("bmi", 22)),
+            diabetes=data.get("diabetes", "None"),
+            cholesterol=bool(data.get("cholesterol", False)),
+        )
+        return jsonify(result)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route('/meal-plan', methods=['POST'])
-def generate_meal_plan():
-    try:
-        data = request.get_json()
-        phase = data.get('phase', 'Follicular')
-        risk_level = data.get('risk_level', 'Moderate')
-        diabetes = data.get('diabetes', 'No')
-        calorie_goal = float(data.get('calorie_goal', 1800))
-
-        suitable = foods_data[foods_data['pcos_friendly'] == True].copy()
-        if diabetes == 'Yes':
-            suitable = suitable[suitable['carbs'] <= 35]
-
-        def get_random(df, n=1):
-            if len(df) == 0: return []
-            return df.sample(min(n, len(df))).to_dict('records')
-
-        def clean(meals):
-            return [{'id': int(f['id']), 'name': str(f['name']),
-                     'calories': int(f['calories']), 'protein': float(f['protein']),
-                     'carbs': float(f['carbs']), 'fats': float(f['fats']),
-                     'category': str(f['category'])} for f in meals]
-
-        breakfast = get_random(suitable[suitable['category']=='carbs'],1) + \
-                    get_random(suitable[suitable['category']=='protein'],1) + \
-                    get_random(suitable[suitable['category']=='drink'],1)
-        lunch = get_random(suitable[suitable['category']=='carbs'],1) + \
-                get_random(suitable[suitable['category']=='protein'],1) + \
-                get_random(suitable[suitable['category']=='vegetable'],2)
-        dinner = get_random(suitable[suitable['category']=='traditional'],1) + \
-                 get_random(suitable[suitable['category']=='protein'],1) + \
-                 get_random(suitable[suitable['category']=='vegetable'],1)
-        snacks = get_random(suitable[suitable['category']=='fruit'],1) + \
-                 get_random(suitable[suitable['category']=='snack'],1)
-
-        all_meals = breakfast + lunch + dinner + snacks
-        total = {
-            'calories': sum(f.get('calories',0) for f in all_meals),
-            'protein': round(sum(f.get('protein',0) for f in all_meals),1),
-            'carbs': round(sum(f.get('carbs',0) for f in all_meals),1),
-            'fats': round(sum(f.get('fats',0) for f in all_meals),1)
-        }
-
-        return jsonify({
-            'meal_plan': {'breakfast': clean(breakfast), 'lunch': clean(lunch),
-                          'dinner': clean(dinner), 'snacks': clean(snacks)},
-            'total_nutrition': total,
-            'calorie_goal': calorie_goal,
-            'phase': phase,
-            'risk_level': risk_level,
-            'algorithm': 'AI Meal Planning (Rule-Based + Collaborative Filtering)'
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/model-info', methods=['GET'])
-def model_info():
-    return jsonify({
-        'title': 'Cycle Ella AI v4.0',
-        'datasets': [
-            {
-                'name': 'PCOS Infertility Dataset',
-                'source': 'Kaggle',
-                'patients': int(len(df1)),
-                'features': ['AMH', 'Beta-HCG I', 'Beta-HCG II']
-            },
-            {
-                'name': 'South Asian PCOS Dataset',
-                'total_patients': int(len(df2)),
-                'sri_lankan_patients': int(sl_count),
-                'features': ['Age', 'BMI', 'Lifestyle', 'Menstrual', 'Hirsutism', 'Acne']
-            }
-        ],
-        'total_patients': int(len(df1) + len(df2)),
-        'models': [
-            {
-                'name': 'Binary PCOS Detection',
-                'algorithm': 'Random Forest',
-                'test_accuracy': f'{binary_test_acc*100:.1f}%',
-                'cv_accuracy': f'{binary_cv*100:.1f}%',
-                'pkl_file': 'models/pcos_binary_model.pkl'
-            },
-            {
-                'name': 'PCOS Risk Level',
-                'algorithm': 'Random Forest',
-                'test_accuracy': f'{risk_test_acc*100:.1f}%',
-                'cv_accuracy': f'{risk_cv*100:.1f}%',
-                'pkl_file': 'models/pcos_risk_model.pkl'
-            },
-            {
-                'name': 'South Asian PCOS Prediction ⭐',
-                'algorithm': 'Gradient Boosting',
-                'test_accuracy': f'{sa_test_acc*100:.1f}%',
-                'cv_accuracy': f'{sa_cv*100:.1f}%',
-                'sri_lankan_patients': int(sl_count),
-                'pkl_file': 'models/south_asian_model.pkl'
-            },
-            {
-                'name': 'Food Recommendation',
-                'algorithm': 'Collaborative Filtering + Cosine Similarity',
-                'food_database': f'{len(foods_data)} Sri Lankan foods'
-            }
-        ]
-    })
-
-
-@app.route('/search-foods', methods=['GET'])
-def search_foods():
-    query = request.args.get('q', '').lower()
+@app.route("/foods/search", methods=["GET"])
+def search_foods_endpoint():
+    query = request.args.get("q", "")
     if not query:
-        return jsonify({'foods': foods_data.head(20).to_dict('records')})
-    results = foods_data[foods_data['name'].str.lower().str.contains(query)]
-    return jsonify({'foods': results.to_dict('records'), 'count': int(len(results))})
+        return jsonify({"foods": get_all_foods()})
+    return jsonify({"foods": search_foods(query)})
 
 
-@app.route('/foods', methods=['GET'])
-def get_all_foods():
-    return jsonify({'foods': foods_data.to_dict('records'), 'count': int(len(foods_data))})
+@app.route("/foods/all", methods=["GET"])
+def all_foods_endpoint():
+    return jsonify({"foods": get_all_foods(), "count": len(get_all_foods())})
 
 
-if __name__ == '__main__':
-    print("\n" + "="*50)
-    print("Cycle Ella Python AI Service v4.0")
+@app.route("/foods/<int:food_id>/similar", methods=["GET"])
+def similar_foods_endpoint(food_id):
+    n = int(request.args.get("n", 3))
+    similar = find_similar_foods(food_id, n=n)
+    if not similar and food_id not in [f["id"] for f in get_all_foods()]:
+        return jsonify({"error": f"No food found with id {food_id}"}), 404
+    return jsonify({"food_id": food_id, "similar_foods": similar, "algorithm": "K-Nearest Neighbors (cosine similarity)"})
+
+
+if __name__ == "__main__":
+    print("\n" + "=" * 50)
+    print("Cycle Ella AI Service v5.1")
     print("Running on http://localhost:5001")
-    print(f"Total patients: {len(df1) + len(df2):,}")
-    print(f"Sri Lankan patients: {sl_count:,}")
-    print(f"Biomarker Model: {binary_test_acc*100:.1f}%")
-    print(f"Risk Model: {risk_test_acc*100:.1f}%")
-    print(f"South Asian Model: {sa_test_acc*100:.1f}% 🔥")
-    print(f"Foods: {len(foods_data)}")
-    print(f"PKL models saved in: ai-service/models/")
-    print("="*50 + "\n")
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    print(f"Model 1 (PCOS Detector - Logistic Regression): {pcos_metrics['test_accuracy']}% accuracy")
+    print("=" * 50 + "\n")
+    app.run(host="0.0.0.0", port=5001, debug=True)

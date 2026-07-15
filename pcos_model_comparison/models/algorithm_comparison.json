@@ -1,0 +1,70 @@
+{
+  "dataset": {
+    "total_patients": 539,
+    "features": [
+      "Age (yrs)",
+      "Weight (Kg)",
+      "Height(Cm)",
+      "BMI",
+      "Cycle(R/I)",
+      "Cycle length(days)",
+      "Weight gain(Y/N)",
+      "hair growth(Y/N)",
+      "Skin darkening (Y/N)",
+      "Hair loss(Y/N)",
+      "Pimples(Y/N)",
+      "Fast food (Y/N)",
+      "Reg.Exercise(Y/N)"
+    ],
+    "train_size": 431,
+    "test_size": 108,
+    "random_state": 42
+  },
+  "results": {
+    "Random Forest": {
+      "test_accuracy": 77.8,
+      "precision": 61.7,
+      "recall": 82.9,
+      "f1_score": 70.7,
+      "auc": 87.9,
+      "cv_accuracy": 82.7,
+      "cv_std": 3.5,
+      "confusion_matrix": {
+        "true_negative": 55,
+        "false_positive": 18,
+        "false_negative": 6,
+        "true_positive": 29
+      }
+    },
+    "Logistic Regression": {
+      "test_accuracy": 80.6,
+      "precision": 65.9,
+      "recall": 82.9,
+      "f1_score": 73.4,
+      "auc": 88.2,
+      "cv_accuracy": 82.4,
+      "cv_std": 3.0,
+      "confusion_matrix": {
+        "true_negative": 58,
+        "false_positive": 15,
+        "false_negative": 6,
+        "true_positive": 29
+      }
+    },
+    "Support Vector Machine": {
+      "test_accuracy": 74.1,
+      "precision": 56.6,
+      "recall": 85.7,
+      "f1_score": 68.2,
+      "auc": 88.3,
+      "cv_accuracy": 81.8,
+      "cv_std": 3.2,
+      "confusion_matrix": {
+        "true_negative": 50,
+        "false_positive": 23,
+        "false_negative": 5,
+        "true_positive": 30
+      }
+    }
+  }
+}

@@ -1,44 +1,15 @@
 const db = require('../config/db');
-const { predictPCOSRisk } = require('../ai/pcosPredictor');
 const { getFoodRecommendations, searchFood, getAllFoods } = require('../ai/foodRecommender');
 const axios = require('axios');
-const PYTHON_AI_URL = 'http://localhost:5000';
+const PYTHON_AI_URL = 'http://localhost:5001';
 
-// ALGORITHM 2 — Neural Network PCOS Prediction
-const predictRisk = (req, res) => {
-  const user_id = req.user.id;
-  db.query('SELECT * FROM user_measurements WHERE user_id = ? ORDER BY recorded_at DESC LIMIT 1',
-    [user_id], (err, measurements) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
-      db.query(`SELECT category, SUM(score) as category_score FROM questionnaire_answers WHERE user_id = ? GROUP BY category`,
-        [user_id], (err, scores) => {
-          if (err) return res.status(500).json({ message: 'Database error' });
-          db.query('SELECT date_of_birth FROM users WHERE id = ?', [user_id], (err, userResults) => {
-            if (err) return res.status(500).json({ message: 'Database error' });
-            const bmi = measurements[0]?.bmi || 22;
-            const dob = userResults[0]?.date_of_birth;
-            const age = dob ? Math.floor((new Date() - new Date(dob)) / (365.25 * 24 * 60 * 60 * 1000)) : 25;
-            const scoreMap = {};
-            scores.forEach(s => { scoreMap[s.category] = s.category_score; });
-            const userData = {
-              bmi: parseFloat(bmi),
-              menstrual_score: scoreMap['Menstrual Symptoms'] || 0,
-              hormonal_score: scoreMap['Hormonal Symptoms'] || 0,
-              physical_score: scoreMap['Physical Symptoms'] || 0,
-              lifestyle_score: scoreMap['Lifestyle & Mental Health'] || 0,
-              age
-            };
-            const prediction = predictPCOSRisk(userData);
-            if (!prediction) return res.status(500).json({ message: 'Prediction failed' });
-            db.query('INSERT INTO pcos_risk (user_id, total_score, risk_level) VALUES (?,?,?)',
-              [user_id, Object.values(scoreMap).reduce((a, b) => a + b, 0), prediction.risk_level],
-              (err) => { if (err) console.error('Error saving prediction'); }
-            );
-            res.json({ message: 'PCOS Risk predicted using Neural Network! 🧠', prediction, input_data: userData });
-          });
-        });
-    });
-};
+// NOTE: The old "Neural Network (Synaptic.js)" prediction function that
+// used to live here has been removed — it was trained on 18 made-up
+// examples, not real patients, and was not a genuine predictive model.
+// Real PCOS prediction now happens via pcosController.saveSymptomsAndPredict
+// (see routes/pcos.js -> POST /api/pcos/assessment), which calls our
+// actual trained model (539 real patients, tested, compared against
+// 2 other algorithms — see pcos_model_comparison/ for details).
 
 // ALGORITHM 3 — Collaborative Filtering Food Recommendations
 const getRecommendations = (req, res) => {
@@ -46,7 +17,7 @@ const getRecommendations = (req, res) => {
   db.query('SELECT * FROM user_measurements WHERE user_id = ? ORDER BY recorded_at DESC LIMIT 1',
     [user_id], (err, measurements) => {
       if (err) return res.status(500).json({ message: 'Database error' });
-      db.query('SELECT * FROM user_health_profile WHERE user_id = ?', [user_id], (err, healthProfile) => {
+      db.query('SELECT diabetes, cholesterol, blood_pressure FROM users WHERE id = ?', [user_id], (err, healthProfile) => {
         if (err) return res.status(500).json({ message: 'Database error' });
         const today = new Date().toISOString().split('T')[0];
         db.query('SELECT * FROM cycle_phases WHERE user_id = ? AND phase_date = ?', [user_id, today], (err, phaseResults) => {
@@ -94,60 +65,30 @@ const getFullAIAnalysis = (req, res) => {
       message: `${userName}'s AI Analysis is ready! 🌸`,
       algorithms_used: [
         { name: 'Rule-Based Expert System', purpose: 'Daily personalized nutrition tips', endpoint: '/api/tips/generate' },
-        { name: 'Neural Network (Synaptic.js)', purpose: 'PCOS Risk Prediction', endpoint: '/api/ai/predict-risk' },
-        { name: 'Collaborative Filtering', purpose: 'Food recommendations', endpoint: '/api/ai/recommendations' },
-        { name: 'Random Forest (Python)', purpose: 'Advanced PCOS Risk Prediction', endpoint: '/api/ai/python/predict-risk' },
-        { name: 'Collaborative Filtering (Python)', purpose: 'Advanced food recommendations', endpoint: '/api/ai/python/recommendations' }
-      ]
+        { name: 'Collaborative Filtering (JS)', purpose: 'Food recommendations', endpoint: '/api/ai/recommendations' },
+        { name: 'Logistic Regression (Python, real trained model)', purpose: 'PCOS Risk Prediction', endpoint: '/api/pcos/assessment' },
+        { name: 'Content-Based Filtering + KNN (Python)', purpose: 'Personalized food recommendations', endpoint: '/api/ai/python/recommendations' },
+        { name: 'Content-Based Filtering (Python)', purpose: 'Personalized meal planning', endpoint: '/api/ai/python/meal-plan' },
+      ],
+      note: 'All models are now live.'
     });
   });
 };
 
-// PYTHON AI — PCOS Risk Prediction
-const predictRiskPython = async (req, res) => {
-  const user_id = req.user.id;
-  db.query('SELECT * FROM user_measurements WHERE user_id = ? ORDER BY recorded_at DESC LIMIT 1',
-    [user_id], (err, measurements) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
-      db.query(`SELECT category, SUM(score) as category_score FROM questionnaire_answers WHERE user_id = ? GROUP BY category`,
-        [user_id], (err, scores) => {
-          if (err) return res.status(500).json({ message: 'Database error' });
-          db.query('SELECT date_of_birth FROM users WHERE id = ?', [user_id], async (err, userResults) => {
-            if (err) return res.status(500).json({ message: 'Database error' });
-            const bmi = measurements[0]?.bmi || 22;
-            const dob = userResults[0]?.date_of_birth;
-            const age = dob ? Math.floor((new Date() - new Date(dob)) / (365.25 * 24 * 60 * 60 * 1000)) : 25;
-            const scoreMap = {};
-            scores.forEach(s => { scoreMap[s.category] = s.category_score; });
-            try {
-              const response = await axios.post(`${PYTHON_AI_URL}/predict-risk`, {
-                bmi: parseFloat(bmi),
-                menstrual_score: scoreMap['Menstrual Symptoms'] || 0,
-                hormonal_score: scoreMap['Hormonal Symptoms'] || 0,
-                physical_score: scoreMap['Physical Symptoms'] || 0,
-                lifestyle_score: scoreMap['Lifestyle & Mental Health'] || 0,
-                age
-              });
-              db.query('INSERT INTO pcos_risk (user_id, total_score, risk_level) VALUES (?,?,?)',
-                [user_id, Object.values(scoreMap).reduce((a, b) => a + b, 0), response.data.risk_level],
-                (err) => { if (err) console.error('Error saving prediction'); }
-              );
-              res.json({ message: 'PCOS Risk predicted using Python AI! 🧠', prediction: response.data });
-            } catch (err) {
-              res.status(500).json({ message: 'Python AI service error', error: err.message });
-            }
-          });
-        });
-    });
-};
+// NOTE: the old predictRiskPython() function that lived here has been
+// removed — it sent the wrong data shape (menstrual_score/hormonal_score
+// left over from the old fake Neural Network) to the real model. The
+// correct version now lives in pcosController.saveSymptomsAndPredict
+// (POST /api/pcos/assessment), which sends the real 13-symptom shape
+// the model was actually trained on.
 
-// PYTHON AI — Food Recommendations
+// PYTHON AI — Food Recommendations (Model 2, now live)
 const getRecommendationsPython = async (req, res) => {
   const user_id = req.user.id;
   db.query('SELECT * FROM user_measurements WHERE user_id = ? ORDER BY recorded_at DESC LIMIT 1',
     [user_id], (err, measurements) => {
       if (err) return res.status(500).json({ message: 'Database error' });
-      db.query('SELECT * FROM user_health_profile WHERE user_id = ?', [user_id], (err, healthProfile) => {
+      db.query('SELECT diabetes, cholesterol, blood_pressure FROM users WHERE id = ?', [user_id], (err, healthProfile) => {
         if (err) return res.status(500).json({ message: 'Database error' });
         const today = new Date().toISOString().split('T')[0];
         db.query('SELECT * FROM cycle_phases WHERE user_id = ? AND phase_date = ?', [user_id, today], (err, phaseResults) => {
@@ -158,13 +99,15 @@ const getRecommendationsPython = async (req, res) => {
               try {
                 const response = await axios.post(`${PYTHON_AI_URL}/recommend-foods`, {
                   bmi: parseFloat(measurements[0]?.bmi || 22),
-                  risk_level: riskResults[0]?.risk_level || 'Moderate',
+                  risk_level: riskResults[0]?.risk_level || 'Medium',
                   phase: phaseResults[0]?.phase_name || 'Follicular',
-                  budget: parseFloat(healthProfile[0]?.food_budget || 800),
-                  diabetes: healthProfile[0]?.diabetes || 'No',
-                  cholesterol: healthProfile[0]?.cholesterol || 'No'
+                  // Pass the real severity level through (None /
+                  // Pre-diabetic / Diet-controlled / Insulin-dependent)
+                  // instead of collapsing it to a Yes/No boolean.
+                  diabetes: healthProfile[0]?.diabetes || 'None',
+                  cholesterol: healthProfile[0]?.cholesterol === 'Yes'
                 });
-                res.json({ message: 'Food recommendations from Python AI! 🍽️', ...response.data });
+                res.json({ message: 'Food recommendations ready! 🍽️', ...response.data });
               } catch (err) {
                 res.status(500).json({ message: 'Python AI service error', error: err.message });
               }
@@ -174,13 +117,13 @@ const getRecommendationsPython = async (req, res) => {
     });
 };
 
-// PYTHON AI — Meal Plan
+// PYTHON AI — Meal Plan (Model 2, now live)
 const getMealPlan = async (req, res) => {
   const user_id = req.user.id;
   db.query('SELECT * FROM user_measurements WHERE user_id = ? ORDER BY recorded_at DESC LIMIT 1',
     [user_id], (err, measurements) => {
       if (err) return res.status(500).json({ message: 'Database error' });
-      db.query('SELECT * FROM user_health_profile WHERE user_id = ?', [user_id], (err, healthProfile) => {
+      db.query('SELECT diabetes, cholesterol, blood_pressure FROM users WHERE id = ?', [user_id], (err, healthProfile) => {
         if (err) return res.status(500).json({ message: 'Database error' });
         const today = new Date().toISOString().split('T')[0];
         db.query('SELECT * FROM cycle_phases WHERE user_id = ? AND phase_date = ?', [user_id, today], (err, phaseResults) => {
@@ -191,11 +134,10 @@ const getMealPlan = async (req, res) => {
               try {
                 const response = await axios.post(`${PYTHON_AI_URL}/meal-plan`, {
                   bmi: parseFloat(measurements[0]?.bmi || 22),
-                  risk_level: riskResults[0]?.risk_level || 'Moderate',
+                  risk_level: riskResults[0]?.risk_level || 'Medium',
                   phase: phaseResults[0]?.phase_name || 'Follicular',
-                  budget: parseFloat(healthProfile[0]?.food_budget || 800),
-                  diabetes: healthProfile[0]?.diabetes || 'No',
-                  calorie_goal: 1800
+                  diabetes: healthProfile[0]?.diabetes || 'None',
+                  cholesterol: healthProfile[0]?.cholesterol === 'Yes'
                 });
                 res.json({ message: 'Daily meal plan generated! 🍛', ...response.data });
               } catch (err) {
@@ -208,12 +150,10 @@ const getMealPlan = async (req, res) => {
 };
 
 module.exports = {
-  predictRisk,
   getRecommendations,
   searchFoodItem,
   getFoods,
   getFullAIAnalysis,
-  predictRiskPython,
   getRecommendationsPython,
   getMealPlan
 };

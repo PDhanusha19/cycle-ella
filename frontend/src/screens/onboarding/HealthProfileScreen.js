@@ -27,7 +27,7 @@ function OptionGroup({ question, options, selected, onSelect }) {
 }
 
 export default function HealthProfileScreen({ navigation }) {
-  const [diabetes, setDiabetes] = useState('No');
+  const [diabetes, setDiabetes] = useState('None');
   const [cholesterol, setCholesterol] = useState('Not sure');
   const [bloodPressure, setBloodPressure] = useState('No');
   const [budget, setBudget] = useState('');
@@ -64,7 +64,8 @@ export default function HealthProfileScreen({ navigation }) {
 
         <View style={s.card}>
           <Text style={s.sectionTitle}>MEDICAL CONDITIONS</Text>
-          <OptionGroup question="Do you have diabetes?" options={['Yes', 'No', 'Not sure']} selected={diabetes} onSelect={setDiabetes} />
+          <OptionGroup question="Do you have diabetes?" options={['None', 'Pre-diabetic', 'Diet-controlled', 'Insulin-dependent']} selected={diabetes} onSelect={setDiabetes} />
+          <Text style={s.hintTxt}>Diet-controlled = managed through food/exercise only. Insulin-dependent = takes insulin or diabetes medication.</Text>
           <OptionGroup question="High cholesterol?" options={['Yes', 'No', 'Not sure']} selected={cholesterol} onSelect={setCholesterol} />
           <OptionGroup question="High blood pressure?" options={['Yes', 'No', 'Not sure']} selected={bloodPressure} onSelect={setBloodPressure} />
         </View>
@@ -107,6 +108,7 @@ const s = StyleSheet.create({
   card: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 20, padding: 16 },
   sectionTitle: { fontSize: 11, fontWeight: '800', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 },
   qTxt: { fontSize: 12, fontWeight: '700', color: colors.textPrimary, marginBottom: 8 },
+  hintTxt: { fontSize: 10.5, color: colors.textSecondary, marginTop: -6, marginBottom: 12, lineHeight: 15 },
   optRow: { flexDirection: 'row', gap: 8 },
   optBtn: { flex: 1, paddingVertical: 8, borderRadius: 12, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', backgroundColor: colors.surface },
   optBtnActive: { backgroundColor: colors.lavender, borderColor: colors.purple },

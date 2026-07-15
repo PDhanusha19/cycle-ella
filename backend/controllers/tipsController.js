@@ -61,7 +61,7 @@ const generateTips = async (req, res) => {
     // Get health profile
     const getHealthProfile = () => new Promise((resolve) => {
       db.query(
-        'SELECT * FROM user_health_profile WHERE user_id = ?',
+        'SELECT diabetes, cholesterol, blood_pressure FROM users WHERE id = ?',
         [user_id],
         (err, results) => resolve(results?.[0] || null)
       );

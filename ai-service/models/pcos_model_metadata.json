@@ -1,0 +1,43 @@
+{
+  "feature_order": [
+    "Age (yrs)",
+    "Weight (Kg)",
+    "Height(Cm)",
+    "BMI",
+    "Cycle(R/I)",
+    "Cycle length(days)",
+    "Weight gain(Y/N)",
+    "hair growth(Y/N)",
+    "Skin darkening (Y/N)",
+    "Hair loss(Y/N)",
+    "Pimples(Y/N)",
+    "Fast food (Y/N)",
+    "Reg.Exercise(Y/N)"
+  ],
+  "cycle_encoding": {
+    "Regular": 2,
+    "Irregular": 4
+  },
+  "binary_encoding": {
+    "No": 0,
+    "Yes": 1
+  },
+  "trained_on": {
+    "total_patients": 539,
+    "source": "Kerala, India clinical dataset (10 hospitals), 539 patients"
+  },
+  "metrics": {
+    "test_accuracy": 80.6,
+    "precision": 65.9,
+    "recall": 82.9,
+    "f1_score": 73.4,
+    "auc": 88.2,
+    "cv_accuracy": 82.4
+  },
+  "risk_level_thresholds": {
+    "low": "probability < 0.33",
+    "medium": "0.33 <= probability < 0.66",
+    "high": "probability >= 0.66"
+  },
+  "algorithm": "Logistic Regression"
+}
