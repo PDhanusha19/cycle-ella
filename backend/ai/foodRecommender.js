@@ -131,7 +131,6 @@ const getFoodRecommendations = (userData) => {
     bmi = 22,
     risk_level = 'Moderate',
     phase = 'Follicular',
-    budget = 800,
     diabetes = 'No',
     cholesterol = 'No'
   } = userData;

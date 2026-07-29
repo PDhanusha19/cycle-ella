@@ -27,7 +27,7 @@ router.get('/food/all', protect, getFoods);
 // Full AI analysis overview
 router.get('/analysis', protect, getFullAIAnalysis);
 
-// Python AI routes — NOT YET WORKING, Model 2 still being built
+// Python AI routes — Model 2 (content-based + KNN food recommender)
 router.post('/python/recommendations', protect, getRecommendationsPython);
 router.post('/python/meal-plan', protect, getMealPlan);
 

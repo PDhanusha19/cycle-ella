@@ -4,7 +4,6 @@ const {
   getCyclePhaseTip,
   getWeatherTip,
   getFoodAnalysisTips,
-  getBudgetTip,
   getExerciseSuggestion,
   calculateHealthScore
 } = require('../ai/tipEngine');
@@ -76,17 +75,10 @@ const generateTips = async (req, res) => {
       getWeather(lat || 6.9271, lon || 79.8612)
     ]);
 
-    // Calculate remaining budget
-    const totalBudget = healthProfile?.food_budget || 800;
-    const caloriesLogged = nutrition?.total_calories || 0;
-    const estimatedSpent = (caloriesLogged / 2000) * totalBudget;
-    const remainingBudget = Math.max(0, totalBudget - estimatedSpent).toFixed(0);
-
     // Generate all tips
     const cycleTip = getCyclePhaseTip(phase?.phase_name || 'Unknown', userName);
     const weatherTip = getWeatherTip(weatherData, userName);
     const foodTips = getFoodAnalysisTips(nutrition, healthProfile, userName);
-    const budgetTip = getBudgetTip(remainingBudget, userName);
     const exerciseTip = getExerciseSuggestion(
       nutrition?.total_calories || 0,
       phase?.phase_name,
@@ -112,12 +104,6 @@ const generateTips = async (req, res) => {
         nutrition: nutrition || {},
         tips: foodTips
       },
-      budget_tip: {
-        type: 'Budget',
-        total_budget: totalBudget,
-        remaining: remainingBudget,
-        tip: budgetTip
-      },
       exercise_tip: {
         type: 'Exercise',
         tip: exerciseTip
@@ -137,7 +123,6 @@ const generateTips = async (req, res) => {
     saveTip('cycle', cycleTip.tip);
     saveTip('weather', weatherTip);
     saveTip('food', foodTips.join(' | '));
-    saveTip('budget', budgetTip);
     saveTip('exercise', exerciseTip);
 
     res.json(allTips);

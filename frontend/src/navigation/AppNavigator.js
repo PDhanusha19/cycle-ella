@@ -27,8 +27,7 @@ import TipsScreen from '../screens/main/TipsScreen';
 import ProgressScreen from '../screens/main/ProgressScreen';
 import ReportsScreen from '../screens/main/ReportsScreen';
 import RemindersScreen from '../screens/main/RemindersScreen';
-import GynoScreen from '../screens/main/GynoScreen';
-import ChatbotScreen from '../screens/main/ChatbotScreen';
+import HealthAssistantScreen from '../screens/main/HealthAssistantScreen';
 import SettingsScreen from '../screens/main/SettingsScreen';
 
 const Stack = createNativeStackNavigator();
@@ -114,8 +113,12 @@ const AppNavigator = () => (
       <Stack.Screen name="Progress" component={ProgressScreen} />
       <Stack.Screen name="Reports" component={ReportsScreen} />
       <Stack.Screen name="Reminders" component={RemindersScreen} />
-      <Stack.Screen name="Gyno" component={GynoScreen} />
-      <Stack.Screen name="Chatbot" component={ChatbotScreen} />
+      <Stack.Screen name="HealthAssistant" component={HealthAssistantScreen} />
+      {/* Old route names kept as aliases so any existing
+          navigate('Gyno') / navigate('Chatbot') calls elsewhere
+          in the app still work and land on the new unified screen. */}
+      <Stack.Screen name="Gyno" component={HealthAssistantScreen} />
+      <Stack.Screen name="Chatbot" component={HealthAssistantScreen} />
     </Stack.Navigator>
   </NavigationContainer>
 );

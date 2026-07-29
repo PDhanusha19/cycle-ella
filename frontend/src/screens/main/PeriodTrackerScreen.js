@@ -72,6 +72,7 @@ export default function PeriodTrackerScreen({ navigation }) {
   const [symptoms, setSymptoms] = useState([]);
   const [predictions, setPredictions] = useState({ nextPeriod: '—', ovulationWindow: '—', avgCycle: '28d' });
   const [regularity, setRegularity] = useState({ status: null, message: '', avgCycle: null, variance: null });
+  const [hasAssessment, setHasAssessment] = useState(true); // assume true until checked, so the button doesn't flash in
   const [loading, setLoading] = useState(false);
 
   const [pendingStart, setPendingStart] = useState(null);
@@ -83,7 +84,7 @@ export default function PeriodTrackerScreen({ navigation }) {
   const isCurrentMonth = viewYear === now.getFullYear() && viewMonth === now.getMonth() + 1;
 
   useEffect(() => { loadCalendarData(); }, [viewYear, viewMonth]);
-  useEffect(() => { loadPhaseAndPredictions(); loadTodaySymptoms(); loadRegularity(); }, []);
+  useEffect(() => { loadPhaseAndPredictions(); loadTodaySymptoms(); loadRegularity(); loadAssessmentStatus(); }, []);
 
   const loadCalendarData = async () => {
     try {
@@ -114,6 +115,15 @@ export default function PeriodTrackerScreen({ navigation }) {
       const res = await api.get('/period/regularity');
       setRegularity(res.data || {});
     } catch (_) {}
+  };
+
+  const loadAssessmentStatus = async () => {
+    try {
+      await api.get('/pcos/risk');
+      setHasAssessment(true);
+    } catch (err) {
+      setHasAssessment(err?.response?.status !== 404);
+    }
   };
 
   const loadTodaySymptoms = async () => {
@@ -291,9 +301,16 @@ export default function PeriodTrackerScreen({ navigation }) {
                 {regularity.message}
               </Text>
               {isIrregular && (
-                <TouchableOpacity style={s.gynoBtn} onPress={() => navigation.navigate('Gyno')}>
-                  <Text style={s.gynoBtnTxt}>👩‍⚕️ Find a Gynecologist</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                  {!hasAssessment && (
+                    <TouchableOpacity style={s.gynoBtn} onPress={() => navigation.navigate('Questionnaire')}>
+                      <Text style={s.gynoBtnTxt}>📋 Take the PCOS Assessment</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity style={s.gynoBtn} onPress={() => navigation.navigate('HealthAssistant', { initialTab: 'doctors' })}>
+                    <Text style={s.gynoBtnTxt}>👩‍⚕️ Find a Gynecologist</Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
           </View>

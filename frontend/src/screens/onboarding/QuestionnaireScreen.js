@@ -1,22 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme/colors';
 import api from '../../api/api';
 
-// These 9 questions map directly to what the trained PCOS model needs.
-// (Age, weight, and height are already collected earlier in onboarding,
-// so we don't ask for them again here.)
+// These questions map directly to what the trained PCOS model needs.
+// (Age and weight/height are already collected earlier in onboarding;
+// cycle regularity is never asked here — it's read from tracked period
+// data instead, see loadRegularity() below.)
 const QUESTIONS = [
-  {
-    key: 'cycle_regularity',
-    q: 'Are your periods regular or irregular?',
-    options: [
-      { label: 'Regular', value: 'Regular' },
-      { label: 'Irregular', value: 'Irregular' },
-    ],
-  },
   {
     key: 'period_duration_days',
     q: 'How many days does your period usually last?',
@@ -70,6 +63,29 @@ export default function QuestionnaireScreen({ navigation }) {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [regularityIsDefault, setRegularityIsDefault] = useState(false);
+  const regularityRef = React.useRef(null);
+
+  // Cycle regularity is never asked here — read it from tracked period
+  // data instead. Falls back to 'Regular' if there isn't enough tracked
+  // data yet (e.g. onboarding was skipped), and flags that so the
+  // result screen can be upfront about the default.
+  useEffect(() => {
+    regularityRef.current = api.get('/period/regularity')
+      .then((res) => {
+        const status = res.data?.status;
+        if (status === 'Regular' || status === 'Irregular') {
+          setRegularityIsDefault(false);
+          return status;
+        }
+        setRegularityIsDefault(true);
+        return 'Regular';
+      })
+      .catch(() => {
+        setRegularityIsDefault(true);
+        return 'Regular';
+      });
+  }, []);
 
   const q = QUESTIONS[qIdx];
   const progress = ((qIdx + 1) / QUESTIONS.length) * 100;
@@ -84,7 +100,8 @@ export default function QuestionnaireScreen({ navigation }) {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await api.post('/pcos/assessment', answers);
+      const cycle_regularity = await regularityRef.current;
+      const res = await api.post('/pcos/assessment', { ...answers, cycle_regularity });
       setResult({
         risk_level: (res.data.risk_level || 'Medium').toLowerCase(),
         probability: res.data.pcos_probability_percent,
@@ -110,7 +127,7 @@ export default function QuestionnaireScreen({ navigation }) {
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
         <View style={s.header}>
           <Text style={s.headerTitle}>PCOS Assessment</Text>
-          <Text style={s.stepLabel}>Step 3 of 4</Text>
+          <Text style={s.stepLabel}>Step 4 of 4</Text>
         </View>
         <ScrollView contentContainerStyle={[s.scroll, { alignItems: 'center' }]}>
           <View style={[s.riskCard, { backgroundColor: colors.amberBg }]}>
@@ -133,7 +150,7 @@ export default function QuestionnaireScreen({ navigation }) {
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
         <View style={s.header}>
           <Text style={s.headerTitle}>PCOS Assessment</Text>
-          <Text style={s.stepLabel}>Step 3 of 4</Text>
+          <Text style={s.stepLabel}>Step 4 of 4</Text>
         </View>
         <ScrollView contentContainerStyle={[s.scroll, { alignItems: 'center' }]}>
           <View style={[s.riskCard, { backgroundColor: cfg.bg }]}>
@@ -153,10 +170,18 @@ export default function QuestionnaireScreen({ navigation }) {
             </View>
           )}
 
+          {regularityIsDefault && (
+            <View style={s.infoBox}>
+              <Text style={s.infoTxt}>
+                📅 We don't have enough tracked periods yet, so your cycle-regularity factor used a default value. Retake this after logging 2+ periods for a more accurate result.
+              </Text>
+            </View>
+          )}
+
           <Text style={s.disclaimer}>⚕️ This is a risk indicator, not a medical diagnosis.</Text>
-          <TouchableOpacity style={s.primaryBtn} onPress={() => navigation.navigate('PeriodHistory')} activeOpacity={0.85}>
+          <TouchableOpacity style={s.primaryBtn} onPress={() => navigation.replace('Main')} activeOpacity={0.85}>
             <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.primaryGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-              <Text style={s.primaryTxt}>Continue Setup</Text>
+              <Text style={s.primaryTxt}>Continue</Text>
             </LinearGradient>
           </TouchableOpacity>
         </ScrollView>
@@ -171,13 +196,12 @@ export default function QuestionnaireScreen({ navigation }) {
           <Text style={s.backArrow}>‹</Text>
         </TouchableOpacity>
         <Text style={s.headerTitle}>PCOS Assessment</Text>
-        <Text style={s.stepLabel}>Step 3 of 4</Text>
+        <Text style={s.stepLabel}>Step 4 of 4</Text>
       </View>
 
       <ScrollView contentContainerStyle={s.scroll}>
         <View style={s.stepBar}>
-          {[0, 1, 2].map(i => <View key={i} style={[s.stepSeg, s.stepSegDone]} />)}
-          <View style={s.stepSeg} />
+          {[0, 1, 2, 3].map(i => <View key={i} style={[s.stepSeg, s.stepSegDone]} />)}
         </View>
 
         <View style={s.progressBar}>

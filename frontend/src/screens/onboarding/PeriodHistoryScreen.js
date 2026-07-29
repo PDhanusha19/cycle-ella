@@ -22,8 +22,7 @@ function getLastMonths(n) {
 
 export default function PeriodHistoryScreen({ navigation }) {
   const recentMonths = getLastMonths(3);
-  const [entries, setEntries] = useState(recentMonths.map((m, i) => ({ ...m, enabled: i < 2, duration: i === 0 ? '5' : '4' })));
-  const [isRegular, setIsRegular] = useState('Not sure');
+  const [entries, setEntries] = useState(recentMonths.map((m, i) => ({ ...m, enabled: i < 2, duration: i === 0 ? '5' : '4', day: '' })));
   const [cycleLength, setCycleLength] = useState('28');
   const [loading, setLoading] = useState(false);
 
@@ -36,16 +35,25 @@ export default function PeriodHistoryScreen({ navigation }) {
   const handleComplete = async () => {
     setLoading(true);
     try {
-      const logs = entries.filter(e => e.enabled && e.duration).map(e => ({ month: e.month, year: e.year, duration: parseInt(e.duration) }));
-      await api.post('/period/history', { 
-  periods: logs.map(l => ({ month: l.month, year: l.year, duration_days: l.duration })),
-  is_regular: isRegular === 'Yes',
-  avg_cycle_length: parseInt(cycleLength) 
-});
+      const logs = entries.filter(e => e.enabled && e.duration).map(e => {
+        const day = parseInt(e.day);
+        return {
+          month: e.month,
+          year: e.year,
+          duration_days: parseInt(e.duration),
+          day: Number.isInteger(day) && day >= 1 && day <= 31 ? day : undefined,
+        };
+      });
+      await api.post('/period/history', {
+        periods: logs,
+        avg_cycle_length: parseInt(cycleLength),
+      });
     } catch (_) {}
     setLoading(false);
-    navigation.replace('Main');
+    navigation.navigate('Questionnaire');
   };
+
+  const handleSkip = () => navigation.navigate('Questionnaire');
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
@@ -54,15 +62,16 @@ export default function PeriodHistoryScreen({ navigation }) {
           <Text style={s.backArrow}>‹</Text>
         </TouchableOpacity>
         <Text style={s.headerTitle}>Period History</Text>
-        <Text style={s.stepLabel}>Step 4 of 4</Text>
+        <Text style={s.stepLabel}>Step 3 of 4</Text>
       </View>
 
       <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
         <View style={s.stepBar}>
-          {[0, 1, 2, 3].map(i => <View key={i} style={[s.stepSeg, s.stepSegDone]} />)}
+          {[0, 1, 2].map(i => <View key={i} style={[s.stepSeg, s.stepSegDone]} />)}
+          <View style={s.stepSeg} />
         </View>
 
-        <Text style={s.hint}>Help us understand your cycle history. Approximate info is fine — no exact dates needed!</Text>
+        <Text style={s.hint}>Help us understand your cycle history. Approximate info is fine — but if you remember the exact day a period started, add it and we'll figure out your regularity automatically instead of asking.</Text>
 
         {entries.map((entry, idx) => (
           <View key={idx} style={[s.entryCard, !entry.enabled && { opacity: 0.45 }]}>
@@ -78,34 +87,38 @@ export default function PeriodHistoryScreen({ navigation }) {
                 />
               </View>
             </View>
-            <View style={s.field}>
-              <Text style={s.label}>DURATION (DAYS)</Text>
-              <TextInput
-                style={s.input}
-                value={entry.duration}
-                onChangeText={v => updateEntry(idx, 'duration', v)}
-                keyboardType="numeric"
-                editable={entry.enabled}
-                placeholder="–"
-                placeholderTextColor={colors.textSecondary}
-              />
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={[s.field, { flex: 1 }]}>
+                <Text style={s.label}>DURATION (DAYS)</Text>
+                <TextInput
+                  style={s.input}
+                  value={entry.duration}
+                  onChangeText={v => updateEntry(idx, 'duration', v)}
+                  keyboardType="numeric"
+                  editable={entry.enabled}
+                  placeholder="–"
+                  placeholderTextColor={colors.textSecondary}
+                />
+              </View>
+              <View style={[s.field, { flex: 1 }]}>
+                <Text style={s.label}>STARTED ON (OPTIONAL)</Text>
+                <TextInput
+                  style={s.input}
+                  value={entry.day}
+                  onChangeText={v => updateEntry(idx, 'day', v)}
+                  keyboardType="numeric"
+                  editable={entry.enabled}
+                  placeholder="Day 1-31"
+                  placeholderTextColor={colors.textSecondary}
+                />
+              </View>
             </View>
           </View>
         ))}
 
         <View style={s.field}>
-          <Text style={s.label}>IS YOUR CYCLE REGULAR?</Text>
-          <View style={s.optRow}>
-            {['Not sure', 'Yes', 'No'].map(opt => (
-              <TouchableOpacity key={opt} style={[s.optBtn, isRegular === opt && s.optBtnActive]} onPress={() => setIsRegular(opt)}>
-                <Text style={[s.optTxt, isRegular === opt && s.optTxtActive]}>{opt}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        <View style={s.field}>
           <Text style={s.label}>AVERAGE CYCLE LENGTH (DAYS)</Text>
+          <Text style={s.hint}>Only used if you didn't add exact start days above — otherwise we calculate this for you.</Text>
           <TextInput style={s.input} value={cycleLength} onChangeText={setCycleLength} keyboardType="numeric" placeholderTextColor={colors.textSecondary} />
         </View>
 
@@ -114,7 +127,7 @@ export default function PeriodHistoryScreen({ navigation }) {
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryTxt}>Complete Setup 🎉</Text>}
           </LinearGradient>
         </TouchableOpacity>
-        <TouchableOpacity style={s.skipBtn} onPress={() => navigation.replace('Main')}>
+        <TouchableOpacity style={s.skipBtn} onPress={handleSkip}>
           <Text style={s.skipBtnTxt}>Skip — I'll add this later</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -141,11 +154,6 @@ const s = StyleSheet.create({
   field: { gap: 8 },
   label: { fontSize: 11, fontWeight: '800', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8 },
   input: { padding: 16, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.border, borderRadius: 16, fontSize: 14, fontWeight: '500', color: colors.textPrimary },
-  optRow: { flexDirection: 'row', gap: 8 },
-  optBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', backgroundColor: colors.surface },
-  optBtnActive: { backgroundColor: colors.lavender, borderColor: colors.purple },
-  optTxt: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
-  optTxtActive: { color: colors.purple, fontWeight: '800' },
   primaryBtn: { borderRadius: 16, overflow: 'hidden', shadowColor: '#E5457A', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 24, elevation: 8 },
   primaryGrad: { paddingVertical: 16, alignItems: 'center', borderRadius: 16 },
   primaryTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },

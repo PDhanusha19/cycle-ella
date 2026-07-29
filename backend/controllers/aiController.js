@@ -29,7 +29,6 @@ const getRecommendations = (req, res) => {
                 bmi: parseFloat(measurements[0]?.bmi || 22),
                 risk_level: riskResults[0]?.risk_level || 'Moderate',
                 phase: phaseResults[0]?.phase_name || 'Follicular',
-                budget: parseFloat(healthProfile[0]?.food_budget || 800),
                 diabetes: healthProfile[0]?.diabetes || 'No',
                 cholesterol: healthProfile[0]?.cholesterol || 'No'
               };

@@ -125,27 +125,6 @@ const getFoodAnalysisTips = (nutrition, healthProfile, userName) => {
   return tips;
 };
 
-const getBudgetTip = (remainingBudget, userName) => {
-  const name = userName || 'there';
-  const budget = parseFloat(remainingBudget);
-
-  if (!remainingBudget || budget <= 0) {
-    return `${name}, you've reached your daily food budget! Try home-cooked meals for the rest of the day 🏠`;
-  }
-
-  if (budget >= 600) {
-    return `${name}, you have Rs. ${budget} remaining today 💰 Try rice with dhal curry and a vegetable side — filling, healthy, and under Rs. 300!`;
-  } else if (budget >= 400) {
-    return `${name}, Rs. ${budget} left — a plate of rice with dhal curry costs around Rs. 200-250. High in protein and folate — perfect for PCOS!`;
-  } else if (budget >= 250) {
-    return `${name}, Rs. ${budget} remaining — dhal curry with rice at Rs. 150-200 is your best bet. High in protein, iron and folate 🍛`;
-  } else if (budget >= 100) {
-    return `${name}, Rs. ${budget} left — a banana and a boiled egg is perfect under Rs. 80! 🍌🥚 Gives you potassium and 6g protein!`;
-  } else {
-    return `${name}, budget is very tight (Rs. ${budget} left). Drink water and have home food for your next meal 💙`;
-  }
-};
-
 const getExerciseSuggestion = (calories, phaseName, userName) => {
   const name = userName || 'there';
 
@@ -187,7 +166,6 @@ module.exports = {
   getCyclePhaseTip,
   getWeatherTip,
   getFoodAnalysisTips,
-  getBudgetTip,
   getExerciseSuggestion,
   calculateHealthScore
 };

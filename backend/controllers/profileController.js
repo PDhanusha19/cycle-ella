@@ -3,14 +3,14 @@ const db = require('../config/db');
 // SAVE HEALTH PROFILE (now saves to users table)
 const saveHealthProfile = (req, res) => {
   const user_id = req.user.id;
-  const { diabetes, cholesterol, blood_pressure, food_budget, language, dietary_preference, allergies } = req.body;
+  const { diabetes, cholesterol, blood_pressure, language, dietary_preference, allergies } = req.body;
 
   db.query(
-    `UPDATE users SET 
-      diabetes=?, cholesterol=?, blood_pressure=?, 
-      food_budget=?, language=?, dietary_preference=?, allergies=?
+    `UPDATE users SET
+      diabetes=?, cholesterol=?, blood_pressure=?,
+      language=?, dietary_preference=?, allergies=?
      WHERE id=?`,
-    [diabetes, cholesterol, blood_pressure, food_budget, language, dietary_preference, allergies, user_id],
+    [diabetes, cholesterol, blood_pressure, language, dietary_preference, allergies, user_id],
     (err) => {
       if (err) return res.status(500).json({ message: 'Database error', error: err.message });
       res.json({ message: 'Health profile saved! 🌸' });
@@ -72,9 +72,9 @@ const getProfile = (req, res) => {
   const user_id = req.user.id;
 
   db.query(
-    `SELECT id, full_name, email, phone, gender, date_of_birth, 
-      language, diabetes, cholesterol, blood_pressure, 
-      food_budget, dietary_preference, allergies
+    `SELECT id, full_name, email, phone, gender, date_of_birth,
+      language, diabetes, cholesterol, blood_pressure,
+      dietary_preference, allergies
      FROM users WHERE id = ?`,
     [user_id],
     (err, userResults) => {
@@ -112,17 +112,17 @@ const getBMIHistory = (req, res) => {
 const updateProfile = (req, res) => {
   const user_id = req.user.id;
   const { full_name, gender, date_of_birth, phone, language,
-          diabetes, cholesterol, blood_pressure, food_budget,
+          diabetes, cholesterol, blood_pressure,
           dietary_preference, allergies } = req.body;
 
   db.query(
-    `UPDATE users SET 
+    `UPDATE users SET
       full_name=?, gender=?, date_of_birth=?, phone=?,
       language=?, diabetes=?, cholesterol=?, blood_pressure=?,
-      food_budget=?, dietary_preference=?, allergies=?
+      dietary_preference=?, allergies=?
      WHERE id=?`,
     [full_name, gender, date_of_birth, phone, language,
-     diabetes, cholesterol, blood_pressure, food_budget,
+     diabetes, cholesterol, blood_pressure,
      dietary_preference, allergies, user_id],
     (err) => {
       if (err) return res.status(500).json({ message: 'Error updating profile' });

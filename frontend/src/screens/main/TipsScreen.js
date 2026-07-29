@@ -9,7 +9,6 @@ const TIP_ICONS = {
   cycle: { emoji: '🌀', label: 'Cycle Phase Tip', bg: colors.lightPink },
   weather: { emoji: '⛅', label: 'Weather Tip', bg: '#DFF5FF' },
   food: { emoji: '🍽️', label: 'Food Analysis', bg: colors.greenBg },
-  budget: { emoji: '💰', label: 'Budget Tip', bg: colors.amberBg },
   exercise: { emoji: '🏃', label: 'Exercise Tip', bg: colors.lavender },
 };
 
@@ -129,22 +128,6 @@ export default function TipsScreen({ navigation }) {
                 <Text style={[s.highlightTxt, tip.includes('⚠️') ? { color: colors.pink } : {}]}>{tip}</Text>
               </View>
             ))}
-          </View>
-        )}
-
-        {/* Budget Tip */}
-        {tips?.budget_tip && (
-          <View style={s.tipCard}>
-            <View style={s.tipHeader}>
-              <View style={[s.tipIcon, { backgroundColor: TIP_ICONS.budget.bg }]}>
-                <Text style={{ fontSize: 20 }}>{TIP_ICONS.budget.emoji}</Text>
-              </View>
-              <View>
-                <Text style={s.tipTitle}>{TIP_ICONS.budget.label}</Text>
-                <Text style={s.tipSub}>Rs. {tips.budget_tip.remaining} remaining today</Text>
-              </View>
-            </View>
-            <Text style={s.tipBody}>{tips.budget_tip.tip}</Text>
           </View>
         )}
 

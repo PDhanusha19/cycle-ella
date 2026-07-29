@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme/colors';
@@ -30,14 +30,13 @@ export default function HealthProfileScreen({ navigation }) {
   const [diabetes, setDiabetes] = useState('None');
   const [cholesterol, setCholesterol] = useState('Not sure');
   const [bloodPressure, setBloodPressure] = useState('No');
-  const [budget, setBudget] = useState('');
   const [language, setLanguage] = useState('English');
   const [loading, setLoading] = useState(false);
 
   const handleNext = async () => {
     setLoading(true);
     try {
-     await api.post('/profile/health', { diabetes, cholesterol, blood_pressure: bloodPressure, food_budget: budget, language });
+     await api.post('/profile/health', { diabetes, cholesterol, blood_pressure: bloodPressure, language });
     } catch (_) {}
     setLoading(false);
     navigation.navigate('BMI');
@@ -68,12 +67,6 @@ export default function HealthProfileScreen({ navigation }) {
           <Text style={s.hintTxt}>Diet-controlled = managed through food/exercise only. Insulin-dependent = takes insulin or diabetes medication.</Text>
           <OptionGroup question="High cholesterol?" options={['Yes', 'No', 'Not sure']} selected={cholesterol} onSelect={setCholesterol} />
           <OptionGroup question="High blood pressure?" options={['Yes', 'No', 'Not sure']} selected={bloodPressure} onSelect={setBloodPressure} />
-        </View>
-
-        <View style={s.field}>
-          <Text style={s.label}>DAILY FOOD BUDGET (LKR)</Text>
-          <TextInput style={s.input} placeholder="e.g. 800" placeholderTextColor={colors.textSecondary} value={budget} onChangeText={setBudget} keyboardType="numeric" />
-          <Text style={s.fieldHint}>Used to give you affordable food recommendations</Text>
         </View>
 
         <View style={s.infoBox}>
@@ -114,10 +107,6 @@ const s = StyleSheet.create({
   optBtnActive: { backgroundColor: colors.lavender, borderColor: colors.purple },
   optTxt: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
   optTxtActive: { color: colors.purple, fontWeight: '800' },
-  field: { gap: 8 },
-  label: { fontSize: 11, fontWeight: '800', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.8 },
-  input: { padding: 16, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.border, borderRadius: 16, fontSize: 14, fontWeight: '500', color: colors.textPrimary },
-  fieldHint: { fontSize: 11, color: colors.textSecondary, paddingHorizontal: 4 },
   infoBox: { backgroundColor: colors.lavender, borderRadius: 16, padding: 12, flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   infoTxt: { flex: 1, fontSize: 11, color: colors.purple, fontWeight: '600', lineHeight: 18 },
   primaryBtn: { borderRadius: 16, overflow: 'hidden', shadowColor: '#E5457A', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 24, elevation: 8 },

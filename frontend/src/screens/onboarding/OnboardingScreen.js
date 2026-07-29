@@ -7,7 +7,7 @@ const { width } = Dimensions.get('window');
 
 const SLIDES = [
   { emoji: '🌸', title: 'Track your cycle,\nunderstand your body', body: 'Monitor your menstrual cycle, detect cycle phases, and understand what your body is telling you every day.' },
-  { emoji: '🥗', title: 'Personalized nutrition\nfor your PCOS', body: 'Get AI-powered food recommendations based on your cycle phase, budget, and Sri Lankan meals you already love.' },
+  { emoji: '🥗', title: 'Personalized nutrition\nfor your PCOS', body: 'Get AI-powered food recommendations based on your cycle phase and Sri Lankan meals you already love.' },
   { emoji: '💡', title: 'Smart health tips\nevery single day', body: 'Receive daily tips based on your cycle, food logs, and weather — all tailored to your unique health profile.' },
   { emoji: '👩‍⚕️', title: 'Connect with\ngynecologists near you', body: 'Browse a curated directory of PCOS specialists in Sri Lanka and book appointments with ease.' },
 ];

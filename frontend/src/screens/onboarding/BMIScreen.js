@@ -133,7 +133,7 @@ export default function BMIScreen({ navigation }) {
       });
     } catch (_) {}
     setLoading(false);
-    navigation.navigate('Questionnaire');
+    navigation.navigate('PeriodHistory');
   };
 
   return (

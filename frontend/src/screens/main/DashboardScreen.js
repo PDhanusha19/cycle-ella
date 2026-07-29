@@ -9,7 +9,7 @@ import useStore from '../../store/useStore';
 const QUICK_ACTIONS = [
   { emoji: '🍱', label: 'Log Food', screen: 'FoodLog' },
   { emoji: '📅', label: 'Period Log', screen: 'PeriodTracker' },
-  { emoji: '💬', label: 'Ask AI', screen: 'Chatbot' },
+  { emoji: '💬', label: 'Ask Ella', screen: 'HealthAssistant' },
   { emoji: '📊', label: 'Reports', screen: 'Reports' },
 ];
 
@@ -185,9 +185,6 @@ export default function DashboardScreen({ navigation }) {
           </TouchableOpacity>
           <TouchableOpacity style={s.moreBtn} onPress={() => navigation.navigate('Reminders')}>
             <Text style={s.moreTxt}>🔔 Reminders</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.moreBtn} onPress={() => navigation.navigate('Gyno')}>
-            <Text style={s.moreTxt}>👩‍⚕️ Gyno</Text>
           </TouchableOpacity>
           <TouchableOpacity style={s.moreBtn} onPress={() => navigation.navigate('Settings')}>
             <Text style={s.moreTxt}>⚖️ BMI</Text>

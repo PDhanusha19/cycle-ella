@@ -63,7 +63,6 @@ db.connect((err) => {
           pcos_diagnosis BOOLEAN DEFAULT FALSE,
           diabetes VARCHAR(20),
           cholesterol VARCHAR(20),
-          food_budget DECIMAL(10,2),
           activity_level VARCHAR(50),
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           FOREIGN KEY (user_id) REFERENCES users(id)
@@ -170,6 +169,7 @@ db.connect((err) => {
           is_regular BOOLEAN DEFAULT FALSE,
           avg_cycle_length INT,
           start_date DATE,
+          is_estimated BOOLEAN DEFAULT FALSE,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (user_id) REFERENCES users(id)
         )`,

@@ -33,6 +33,8 @@ const aiRoutes = require('./routes/ai');
 app.use('/api/ai', aiRoutes);
 const faqRoutes = require('./routes/faq');
 app.use('/api/faq', faqRoutes);
+const chatbotRoutes = require('./routes/chatbot');
+app.use('/api/chatbot', chatbotRoutes);
 
 // Test route
 app.get('/', (req, res) => {

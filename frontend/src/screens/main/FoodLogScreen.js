@@ -12,7 +12,7 @@ import * as IntentLauncher from 'expo-intent-launcher';
 const MEAL_TABS = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
 const UNITS = ['g', 'pieces', 'cups', 'tbsp', 'serving'];
 const UNIT_TO_GRAMS = { 'g': 1, 'pieces': 100, 'cups': 200, 'tbsp': 15, 'serving': 150 };
-const BASE = 'http://192.168.8.141:3000/api';
+const BASE = api.defaults.baseURL;
 
 const LANG_OPTIONS = [
   { code: 'en-US', label: '🇬🇧 English' },
@@ -197,6 +197,10 @@ export default function FoodLogScreen({ navigation }) {
   const [voiceText, setVoiceText] = useState('');
   const [voiceItems, setVoiceItems] = useState([]);
   const [showVoiceResults, setShowVoiceResults] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState(null);
+  const [aiBasedOn, setAiBasedOn] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
@@ -307,6 +311,20 @@ export default function FoodLogScreen({ navigation }) {
         quantity: parseFloat(quantity), unit,
       });
     } catch (_) {}
+  };
+
+  const loadAiSuggestions = async () => {
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await api.post('/ai/python/recommendations');
+      setAiSuggestions(res.data?.recommendations || []);
+      setAiBasedOn(res.data?.based_on || null);
+    } catch (err) {
+      setAiSuggestions(null);
+      setAiError("Couldn't reach the AI suggestion service right now. Please try again in a moment.");
+    }
+    setAiLoading(false);
   };
 
   const handleSave = () => Alert.alert('Saved! 🌸', 'Your food log has been saved successfully.');
@@ -421,6 +439,62 @@ export default function FoodLogScreen({ navigation }) {
           </View>
         </View>
 
+        <Text style={s.sectionTitleLarge}>AI Suggested For You</Text>
+        <View style={[s.card, { gap: 10 }]}>
+          {!aiSuggestions && !aiLoading && !aiError && (
+            <>
+              <Text style={s.foodResultMeta}>Get food picks based on your BMI, diabetes/cholesterol profile, and current PCOS risk level.</Text>
+              <TouchableOpacity style={s.aiSuggestBtn} onPress={loadAiSuggestions} activeOpacity={0.85}>
+                <Text style={s.aiSuggestBtnTxt}>✨ Get Suggestions</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {aiLoading && (
+            <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+              <ActivityIndicator color={colors.purple} />
+            </View>
+          )}
+
+          {aiError && (
+            <>
+              <Text style={s.foodResultMeta}>{aiError}</Text>
+              <TouchableOpacity style={s.aiSuggestBtn} onPress={loadAiSuggestions} activeOpacity={0.85}>
+                <Text style={s.aiSuggestBtnTxt}>Try Again</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {aiSuggestions && !aiLoading && (
+            <>
+              {aiBasedOn && (
+                <Text style={s.foodResultMeta}>
+                  Based on your BMI ({aiBasedOn.bmi_category || 'unknown'}){aiBasedOn.diabetes_level && aiBasedOn.diabetes_level !== 'None' ? ` and ${aiBasedOn.diabetes_level.toLowerCase()} diabetes` : ', no diabetes flagged'}.
+                </Text>
+              )}
+              {aiSuggestions.length === 0 ? (
+                <Text style={s.foodResultMeta}>No matching suggestions right now.</Text>
+              ) : aiSuggestions.slice(0, 5).map((item, idx) => (
+                <View key={item.id ?? idx} style={[s.foodResultItem, idx === Math.min(aiSuggestions.length, 5) - 1 && { borderBottomWidth: 0 }]}>
+                  <View style={s.foodResultLeft}>
+                    <Text style={s.foodResultName}>{item.name}</Text>
+                    {item.reasons?.length > 0 && (
+                      <Text style={s.foodResultMeta}>{item.reasons.slice(0, 2).join(' · ')}</Text>
+                    )}
+                  </View>
+                  <View style={s.foodResultRight}>
+                    <Text style={s.foodResultCal}>{item.calories}</Text>
+                    <Text style={s.foodResultCalLabel}>kcal</Text>
+                  </View>
+                </View>
+              ))}
+              <TouchableOpacity style={s.aiSuggestBtnAlt} onPress={loadAiSuggestions} activeOpacity={0.85}>
+                <Text style={s.aiSuggestBtnAltTxt}>Refresh Suggestions</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
         <TouchableOpacity style={s.saveBtn} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
           <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.saveBtnGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
             {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnTxt}>Save Log ✓</Text>}
@@ -502,6 +576,10 @@ const s = StyleSheet.create({
   foodResultCal: { fontSize: 14, fontWeight: '900', color: colors.purple },
   foodResultCalLabel: { fontSize: 9, color: colors.textSecondary },
   foodResultAdd: { fontSize: 22, color: colors.pink, fontWeight: '900', marginLeft: 4 },
+  aiSuggestBtn: { alignSelf: 'flex-start', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, backgroundColor: colors.pink },
+  aiSuggestBtnTxt: { fontSize: 12, fontWeight: '800', color: '#fff' },
+  aiSuggestBtnAlt: { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12, borderWidth: 1.5, borderColor: colors.purple, backgroundColor: colors.lavender, marginTop: 4 },
+  aiSuggestBtnAltTxt: { fontSize: 12, fontWeight: '800', color: colors.purple },
   mealTabs: { flexDirection: 'row', backgroundColor: colors.lavender, borderRadius: 16, padding: 4, gap: 4 },
   mealTab: { flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center' },
   mealTabActive: { backgroundColor: colors.surface },

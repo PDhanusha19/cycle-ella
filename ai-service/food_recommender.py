@@ -1,37 +1,93 @@
 """
-MODEL 2: Personalized Food Recommendation Engine
-===================================================
-Content-based filtering — recommends foods based on YOUR actual
-profile (risk level, cycle phase, BMI, health conditions), not
-fake "users like you" data.
+MODEL 2: Personalized Food Recommendation Engine (v2 — real data)
+=====================================================================
+Now reads your REAL 83-food MySQL database instead of a small
+hardcoded list. Uses your real glycemic_index and pcos_friendly
+columns for more accurate, medically-grounded scoring.
 
-Every recommendation comes with a reason, so it's transparent,
-not a black box.
+Honest limitation: your foods table has no cycle-phase or
+BMI-suitability tagging, so those specific bonuses from the
+earlier version are gone. Everything else (risk-level scoring,
+diabetes severity, cholesterol filtering, KNN similarity) uses
+your real data and is more accurate than before.
+
+If MySQL is unreachable, falls back to a small built-in backup
+list so the service doesn't go down entirely — same safety net
+your original app.py had.
 """
 
-import json
 import os
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FOODS_PATH = os.path.join(BASE_DIR, "data", "foods.json")
+try:
+    import mysql.connector
+    MYSQL_AVAILABLE = True
+except ImportError:
+    MYSQL_AVAILABLE = False
 
-with open(FOODS_PATH) as f:
-    FOODS = json.load(f)
+try:
+    from dotenv import load_dotenv
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+except ImportError:
+    pass
+
+DB_CONFIG = {
+    "host": os.environ.get("DB_HOST", "localhost"),
+    "user": os.environ.get("DB_USER", "root"),
+    "password": os.environ.get("DB_PASSWORD", ""),
+    "database": os.environ.get("DB_NAME", "cycleella"),
+}
+
+# Small backup list, used ONLY if MySQL is unreachable, so the
+# service degrades gracefully instead of crashing entirely.
+BACKUP_FOODS = [
+    {"id": 1, "name": "Red Rice", "calories": 216, "protein": 5, "carbs": 45, "fats": 1.6,
+     "category": "carbs", "glycemic_index": "medium", "pcos_friendly": 1},
+    {"id": 2, "name": "Dhal Curry", "calories": 220, "protein": 12, "carbs": 35, "fats": 3,
+     "category": "protein", "glycemic_index": "low", "pcos_friendly": 1},
+    {"id": 3, "name": "Boiled Eggs", "calories": 78, "protein": 6, "carbs": 0.6, "fats": 5,
+     "category": "protein", "glycemic_index": "low", "pcos_friendly": 1},
+    {"id": 4, "name": "Gotukola Sambol", "calories": 45, "protein": 2, "carbs": 8, "fats": 0.5,
+     "category": "vegetable", "glycemic_index": "low", "pcos_friendly": 1},
+]
+
+
+def load_foods_from_db():
+    """Loads the real 83-food database from MySQL. Falls back to a
+    small backup list if the connection fails for any reason."""
+    if not MYSQL_AVAILABLE:
+        print("mysql-connector not installed — using backup food list")
+        return BACKUP_FOODS
+
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT id, name, calories, protein, carbs, fats, category, "
+                        "glycemic_index, pcos_friendly, cuisine, sinhala_name, tamil_name FROM foods")
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        if not rows:
+            print("foods table is empty — using backup food list")
+            return BACKUP_FOODS
+        print(f"Loaded {len(rows)} real foods from MySQL")
+        return rows
+    except Exception as e:
+        print(f"MySQL connection failed ({e}) — using backup food list")
+        return BACKUP_FOODS
+
+
+FOODS = load_foods_from_db()
 
 # ============================================
 # KNN NUTRITIONAL SIMILARITY (cosine similarity)
-# Treats each food's [calories, protein, carbs, fats] as a vector
-# and finds the nutritionally-closest foods to any given one.
-# Real ML technique (K-Nearest Neighbors), computed on real food
-# data — no fake users, no training data needed beyond the foods
-# themselves.
 # ============================================
 _food_ids = [f["id"] for f in FOODS]
 _feature_matrix = np.array([
-    [f["calories"], f["protein"], f["carbs"], f["fats"]] for f in FOODS
+    [float(f["calories"]), float(f["protein"]), float(f["carbs"]), float(f["fats"])] for f in FOODS
 ])
 
 _scaler = StandardScaler()
@@ -42,9 +98,6 @@ _knn.fit(_scaled_features)
 
 
 def find_similar_foods(food_id, n=3):
-    """Returns the n foods nutritionally most similar to the given food_id
-    (excluding the food itself), using cosine similarity on
-    [calories, protein, carbs, fats]."""
     try:
         idx = _food_ids.index(food_id)
     except ValueError:
@@ -57,7 +110,7 @@ def find_similar_foods(food_id, n=3):
         if _food_ids[i] == food_id:
             continue
         food = FOODS[i]
-        similarity_pct = round((1 - dist) * 100, 1)  # cosine distance -> similarity %
+        similarity_pct = round((1 - dist) * 100, 1)
         similar.append({**food, "similarity_percent": similarity_pct})
         if len(similar) >= n:
             break
@@ -74,100 +127,79 @@ def get_bmi_category(bmi):
     return "obese"
 
 
-# Diabetes severity -> max carbs per food (grams). Stricter control
-# needs a lower ceiling. 'None' means no diabetes-related limit.
-DIABETES_CARB_LIMITS = {
-    "None": None,
-    "Pre-diabetic": 45,
-    "Diet-controlled": 35,
-    "Insulin-dependent": 25,
+# Diabetes severity -> which glycemic-index levels are allowed at all.
+# Real GI data is a better clinical signal than a raw carb-gram cutoff.
+DIABETES_ALLOWED_GI = {
+    "None": {"low", "medium", "high"},
+    "Pre-diabetic": {"low", "medium", "high"},   # allowed, but high GI deprioritized in scoring
+    "Diet-controlled": {"low", "medium"},
+    "Insulin-dependent": {"low"},
 }
 
 
 def normalize_diabetes_level(diabetes):
-    """Accepts either the new severity strings ('None', 'Pre-diabetic',
-    'Diet-controlled', 'Insulin-dependent') or the old True/False
-    boolean for backward compatibility with older callers."""
     if isinstance(diabetes, bool):
         return "Diet-controlled" if diabetes else "None"
-    if diabetes in DIABETES_CARB_LIMITS:
+    if diabetes in DIABETES_ALLOWED_GI:
         return diabetes
-    return "None"  # unrecognized value -> safest default, no filter
+    return "None"
 
 
 def passes_hard_filters(food, diabetes_level, cholesterol):
-    """Foods that are medically unsuitable get excluded entirely,
-    not just deprioritized."""
-    carb_limit = DIABETES_CARB_LIMITS.get(diabetes_level)
-    if carb_limit is not None and food["carbs"] > carb_limit:
+    allowed_gi = DIABETES_ALLOWED_GI.get(diabetes_level, {"low", "medium", "high"})
+    if food.get("glycemic_index") not in allowed_gi:
         return False
-    if cholesterol and food["fats"] > 10:
+    if cholesterol and float(food["fats"]) > 10:
         return False
     return True
 
 
-def score_food(food, risk_level, phase, bmi_category, diabetes_level="None"):
+def score_food(food, risk_level, diabetes_level="None"):
     """
-    Returns (score, reasons) — a transparent, explainable score.
-    Higher score = better fit for this specific person right now.
+    Returns (score, reasons). No phase/BMI-suitability bonus — your
+    real database doesn't tag foods that way, so that dimension is
+    honestly left out rather than faked.
     """
     score = 0
     reasons = []
+    gi = food.get("glycemic_index")
 
-    # --- Cycle phase match ---
-    if "all" in food["phase"] or phase in food["phase"]:
-        score += 3
-        if phase in food["phase"]:
-            reasons.append(f"good for your {phase.lower()} phase")
-
-    # --- BMI suitability match ---
-    if "all" in food["suitable_for"] or bmi_category in food["suitable_for"]:
+    # --- Real pcos_friendly flag ---
+    if food.get("pcos_friendly") in (1, True):
         score += 2
+        reasons.append("tagged PCOS-friendly")
+
+    # --- Real glycemic index ---
+    if gi == "low":
+        score += 3
+        reasons.append("low glycemic index")
+    elif gi == "high":
+        score -= 2
 
     # --- PCOS risk-level adjustments ---
-    # Higher PCOS risk benefits from more protein/fiber, less
-    # refined carbs/sugar (standard PCOS dietary guidance:
-    # lower glycemic load helps manage insulin resistance).
     if risk_level in ("High", "Medium"):
         if food["category"] in ("protein", "vegetable"):
             score += 3
             reasons.append("high in protein/fiber, good for managing PCOS symptoms")
-        if food["category"] == "carbs" and food["carbs"] > 35:
-            score -= 2
-        if food["category"] == "fruit" and food["carbs"] > 20:
-            score -= 1
-        if food["category"] == "snack" and food["carbs"] > 15:
-            score -= 1
 
-    if risk_level == "High":
-        # Extra weight on protein for high risk specifically
-        if food["protein"] >= 10:
-            score += 2
-            reasons.append("high protein content")
+    if risk_level == "High" and float(food["protein"]) >= 10:
+        score += 2
+        reasons.append("high protein content")
 
-    # --- Diabetes severity adjustments ---
-    # Beyond the hard carb-limit filter, more severe diabetes gets
-    # an extra preference for lower-carb, higher-protein foods —
-    # not just "allowed", but actively favored.
-    if diabetes_level == "Insulin-dependent":
-        if food["carbs"] <= 10:
-            score += 3
-            reasons.append("low-carb, suitable for insulin-dependent diabetes")
-        if food["protein"] >= 8:
-            score += 1
-    elif diabetes_level == "Diet-controlled":
-        if food["carbs"] <= 20:
-            score += 2
-            reasons.append("moderate-carb, suitable for diet-controlled diabetes")
-    elif diabetes_level == "Pre-diabetic":
-        if food["carbs"] <= 30:
-            score += 1
+    # --- Diabetes severity extra weighting (beyond the hard filter) ---
+    if diabetes_level in ("Insulin-dependent", "Diet-controlled") and gi == "low":
+        score += 2
+        reasons.append(f"low-GI, suitable for {diabetes_level.lower()} diabetes")
+    elif diabetes_level == "Pre-diabetic" and gi == "high":
+        score -= 1
 
     return score, reasons
 
 
 def recommend_foods(risk_level="Medium", phase="Follicular", bmi=22,
                      diabetes="None", cholesterol=False, top_n=8):
+    """`phase` is accepted for API compatibility but no longer affects
+    scoring — your real food data has no phase tagging."""
     bmi_category = get_bmi_category(bmi)
     diabetes_level = normalize_diabetes_level(diabetes)
 
@@ -175,33 +207,30 @@ def recommend_foods(risk_level="Medium", phase="Follicular", bmi=22,
     for food in FOODS:
         if not passes_hard_filters(food, diabetes_level, cholesterol):
             continue
-        score, reasons = score_food(food, risk_level, phase, bmi_category, diabetes_level)
+        score, reasons = score_food(food, risk_level, diabetes_level)
         scored.append({**food, "score": score, "reasons": reasons})
 
     scored.sort(key=lambda f: -f["score"])
     top = scored[:top_n]
 
-    # Attach nutritionally-similar alternatives to each top pick using KNN
     for food in top:
         food["similar_alternatives"] = find_similar_foods(food["id"], n=2)
 
     return {
         "recommendations": top,
-        "algorithm": "Content-Based Filtering + K-Nearest Neighbors (nutritional similarity)",
+        "algorithm": "Content-Based Filtering + K-Nearest Neighbors (real MySQL data)",
         "based_on": {
             "risk_level": risk_level,
-            "cycle_phase": phase,
             "bmi_category": bmi_category,
             "diabetes_level": diabetes_level,
             "cholesterol_filter_applied": bool(cholesterol),
+            "total_foods_available": len(FOODS),
         },
     }
 
 
 def generate_meal_plan(risk_level="Medium", phase="Follicular", bmi=22,
                         diabetes="None", cholesterol=False):
-    """Builds a simple breakfast/lunch/dinner/snack plan using the
-    same scoring, picking the best-scoring food per category slot."""
     bmi_category = get_bmi_category(bmi)
     diabetes_level = normalize_diabetes_level(diabetes)
 
@@ -214,7 +243,7 @@ def generate_meal_plan(risk_level="Medium", phase="Follicular", bmi=22,
         ]
         scored = []
         for food in candidates:
-            score, reasons = score_food(food, risk_level, phase, bmi_category, diabetes_level)
+            score, reasons = score_food(food, risk_level, diabetes_level)
             scored.append({**food, "score": score, "reasons": reasons})
         scored.sort(key=lambda f: -f["score"])
         return scored[:n]
@@ -229,28 +258,22 @@ def generate_meal_plan(risk_level="Medium", phase="Follicular", bmi=22,
 
     breakfast = pick("carbs", 1) + pick("protein", 1) + pick("drink", 1)
     lunch = pick("carbs", 1) + pick("protein", 1) + pick("vegetable", 2)
-    dinner = pick("vegetable", 1) + pick("protein", 1)
+    dinner = pick("traditional", 1) + pick("protein", 1) + pick("vegetable", 1)
     snacks = pick("fruit", 1) + pick("snack", 1)
 
     all_meals = breakfast + lunch + dinner + snacks
     totals = {
-        "calories": sum(f["calories"] for f in all_meals),
-        "protein": round(sum(f["protein"] for f in all_meals), 1),
-        "carbs": round(sum(f["carbs"] for f in all_meals), 1),
-        "fats": round(sum(f["fats"] for f in all_meals), 1),
+        "calories": sum(float(f["calories"]) for f in all_meals),
+        "protein": round(sum(float(f["protein"]) for f in all_meals), 1),
+        "carbs": round(sum(float(f["carbs"]) for f in all_meals), 1),
+        "fats": round(sum(float(f["fats"]) for f in all_meals), 1),
     }
 
     return {
-        "meal_plan": {
-            "breakfast": breakfast, "lunch": lunch,
-            "dinner": dinner, "snacks": snacks,
-        },
+        "meal_plan": {"breakfast": breakfast, "lunch": lunch, "dinner": dinner, "snacks": snacks},
         "total_nutrition": totals,
-        "algorithm": "Content-Based Meal Planning",
-        "based_on": {
-            "risk_level": risk_level, "cycle_phase": phase,
-            "bmi_category": bmi_category,
-        },
+        "algorithm": "Content-Based Meal Planning (real MySQL data)",
+        "based_on": {"risk_level": risk_level, "bmi_category": bmi_category, "diabetes_level": diabetes_level},
     }
 
 

@@ -10,7 +10,7 @@ const SETTINGS_SECTIONS = [
     title: 'Account',
     items: [
       { icon: '👤', label: 'Edit Profile', sub: 'Update your personal info', color: colors.lavender, screen: 'EditProfile' },
-      { icon: '🏥', label: 'Health Profile', sub: 'Conditions, budget, preferences', color: colors.lightPink, screen: 'HealthProfile' },
+      { icon: '🏥', label: 'Health Profile', sub: 'Conditions, preferences', color: colors.lightPink, screen: 'HealthProfile' },
       { icon: '📏', label: 'BMI & Measurements', sub: 'Weight, height tracker', color: colors.amberBg, screen: 'BMI' },
     ]
   },
@@ -20,8 +20,8 @@ const SETTINGS_SECTIONS = [
       { icon: '🔔', label: 'Reminders', sub: 'Manage your alerts', color: colors.lavender, screen: 'Reminders' },
       { icon: '📊', label: 'Reports', sub: 'View your health reports', color: colors.lightPink, screen: 'Reports' },
       { icon: '📈', label: 'Progress', sub: 'Track your improvements', color: colors.amberBg, screen: 'Progress' },
-      { icon: '👩‍⚕️', label: 'Gyno Directory', sub: 'Find PCOS specialists', color: colors.greenBg, screen: 'Gyno' },
-      { icon: '💬', label: 'FAQ Chatbot', sub: 'Ask PCOS questions', color: colors.blueBg, screen: 'Chatbot' },
+      { icon: '👩‍⚕️', label: 'Gyno Directory', sub: 'Find PCOS specialists', color: colors.greenBg, screen: 'HealthAssistant', params: { initialTab: 'doctors' } },
+      { icon: '💬', label: 'FAQ Chatbot', sub: 'Ask PCOS questions', color: colors.blueBg, screen: 'HealthAssistant', params: { initialTab: 'chat' } },
     ]
   },
   {
@@ -69,7 +69,7 @@ export default function SettingsScreen({ navigation }) {
 
   const handlePress = (item) => {
     if (item.screen) {
-      navigation.navigate(item.screen);
+      navigation.navigate(item.screen, item.params);
     } else {
       Alert.alert(item.label, `${item.label} coming soon! 🌸`);
     }
