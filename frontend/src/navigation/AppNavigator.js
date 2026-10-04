@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text } from 'react-native';
 import { colors } from '../theme/colors';
+import { navigationRef } from './navigationRef';
 
 // Auth Screens
 import SplashScreen from '../screens/onboarding/SplashScreen';
@@ -17,6 +18,7 @@ import OTPScreen from '../screens/auth/OTPScreen';
 import HealthProfileScreen from '../screens/onboarding/HealthProfileScreen';
 import BMIScreen from '../screens/onboarding/BMIScreen';
 import QuestionnaireScreen from '../screens/onboarding/QuestionnaireScreen';
+import ReviewAssessmentScreen from '../screens/onboarding/ReviewAssessmentScreen';
 import PeriodHistoryScreen from '../screens/onboarding/PeriodHistoryScreen';
 
 // Main Screens
@@ -29,6 +31,7 @@ import ReportsScreen from '../screens/main/ReportsScreen';
 import RemindersScreen from '../screens/main/RemindersScreen';
 import HealthAssistantScreen from '../screens/main/HealthAssistantScreen';
 import SettingsScreen from '../screens/main/SettingsScreen';
+import FAQScreen from '../screens/main/FAQScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -87,7 +90,7 @@ const MainTabs = () => (
 );
 
 const AppNavigator = () => (
-  <NavigationContainer>
+  <NavigationContainer ref={navigationRef}>
     <Stack.Navigator
       initialRouteName="Splash"
       screenOptions={{ headerShown: false }}
@@ -106,6 +109,7 @@ const AppNavigator = () => (
       <Stack.Screen name="HealthProfile" component={HealthProfileScreen} />
       <Stack.Screen name="BMI" component={BMIScreen} />
       <Stack.Screen name="Questionnaire" component={QuestionnaireScreen} />
+      <Stack.Screen name="ReviewAssessment" component={ReviewAssessmentScreen} />
       <Stack.Screen name="PeriodHistory" component={PeriodHistoryScreen} />
 
       {/* Main App */}
@@ -114,6 +118,7 @@ const AppNavigator = () => (
       <Stack.Screen name="Reports" component={ReportsScreen} />
       <Stack.Screen name="Reminders" component={RemindersScreen} />
       <Stack.Screen name="HealthAssistant" component={HealthAssistantScreen} />
+      <Stack.Screen name="FAQ" component={FAQScreen} />
       {/* Old route names kept as aliases so any existing
           navigate('Gyno') / navigate('Chatbot') calls elsewhere
           in the app still work and land on the new unified screen. */}

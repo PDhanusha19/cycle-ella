@@ -1,9 +1,29 @@
+require('dotenv').config();
 const mysql = require('mysql2');
 
+const DB_NAME = process.env.DB_NAME;
+
+const missing = ['DB_HOST', 'DB_USER', 'DB_NAME'].filter((n) => !process.env[n]);
+if (missing.length > 0) {
+  console.error('Cannot run setup: missing environment variable(s): ' + missing.join(', '));
+  console.error('See backend/.env.example for the full list.');
+  process.exit(1);
+}
+
+// A database name cannot be passed as a bound parameter, so it is
+// interpolated below. Reject anything that is not a plain identifier
+// rather than splicing arbitrary text into a CREATE DATABASE statement.
+if (!/^[A-Za-z0-9_]+$/.test(DB_NAME)) {
+  console.error(`Invalid DB_NAME ${JSON.stringify(DB_NAME)} — use letters, digits and underscores only.`);
+  process.exit(1);
+}
+
+// No database given here on purpose: it may not exist yet, and connecting
+// to a missing schema fails before we get the chance to create it.
 const db = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: 'cycleella'
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD
 });
 
 db.connect((err) => {
@@ -14,15 +34,15 @@ db.connect((err) => {
   console.log('Connected to MySQL!');
 
   // Create database
-  db.query('CREATE DATABASE IF NOT EXISTS cycleella', (err) => {
+  db.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``, (err) => {
     if (err) {
       console.error('Database creation error:', err.message);
       process.exit(1);
     }
-    console.log('Database cycleella created/exists');
+    console.log(`Database ${DB_NAME} created/exists`);
 
     // Switch to database
-    db.changeUser({ database: 'cycleella' }, (err) => {
+    db.changeUser({ database: DB_NAME }, (err) => {
       if (err) {
         console.error('Error switching database:', err.message);
         process.exit(1);
@@ -112,20 +132,24 @@ db.connect((err) => {
           FOREIGN KEY (user_id) REFERENCES users(id)
         )`,
 
-        // Food log
-        `CREATE TABLE IF NOT EXISTS food_log (
+        // Food log — column list matches the INSERT in
+        // controllers/foodController.js logFood(). The table was previously
+        // created as 'food_log' (singular) here while every query in the
+        // codebase uses 'food_logs', so a fresh install had no working
+        // food logging at all.
+        `CREATE TABLE IF NOT EXISTS food_logs (
           id INT AUTO_INCREMENT PRIMARY KEY,
           user_id INT NOT NULL,
           log_date DATE,
-          meal_type VARCHAR(50),
+          meal_type VARCHAR(20),
           food_name VARCHAR(255),
-          quantity DECIMAL(8,2),
-          unit VARCHAR(50),
-          calories INT,
-          protein DECIMAL(5,2),
-          carbs DECIMAL(5,2),
-          fats DECIMAL(5,2),
-          input_method VARCHAR(50),
+          quantity FLOAT,
+          unit VARCHAR(20),
+          calories FLOAT,
+          protein FLOAT,
+          carbs FLOAT,
+          fats FLOAT,
+          input_method VARCHAR(20),
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (user_id) REFERENCES users(id)
         )`,
@@ -142,6 +166,11 @@ db.connect((err) => {
           glycemic_index VARCHAR(50),
           pcos_friendly BOOLEAN DEFAULT TRUE,
           description TEXT,
+          -- Which basis the nutrient numbers above are stored on:
+          -- 'per_100g', 'per_portion' or 'per_item'. NULL means unknown,
+          -- and the app falls back to the per-100g gram conversion.
+          -- Populated by migrations/add_food_serving_basis.js.
+          serving_basis VARCHAR(20) NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`,
 
@@ -211,6 +240,37 @@ db.connect((err) => {
           notes TEXT,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           FOREIGN KEY (user_id) REFERENCES users(id)
+        )`,
+
+        // Gynecologist directory — columns match the INSERT in
+        // controllers/gynoController.js seedDoctors(). No script created
+        // this table before, so the gyno directory failed on a fresh install.
+        `CREATE TABLE IF NOT EXISTS doctors (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          specialization VARCHAR(255),
+          hospital VARCHAR(255),
+          district VARCHAR(100),
+          contact VARCHAR(50),
+          fee DECIMAL(10,2) DEFAULT 0,
+          is_government BOOLEAN DEFAULT FALSE
+        )`,
+
+        // FAQ content — columns match the queries in
+        // controllers/faqController.js (category_emoji is selected by
+        // getCategories, tags/helpful_count by searchFaq/markHelpful).
+        // No script created this table before, so FAQ failed on a fresh
+        // install. Note the table is created empty: there is no FAQ seed
+        // script in this repo yet, so FAQ endpoints return [] until rows
+        // are added.
+        `CREATE TABLE IF NOT EXISTS faq (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          category VARCHAR(100),
+          category_emoji VARCHAR(10),
+          question TEXT,
+          answer TEXT,
+          tags VARCHAR(255),
+          helpful_count INT DEFAULT 0
         )`,
 
         // Reports/insights

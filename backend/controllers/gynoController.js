@@ -22,9 +22,10 @@ const getAllDoctors = (req, res) => {
 
 // SEARCH DOCTORS
 const searchDoctors = (req, res) => {
-  const { query, district } = req.query;
+  const { district } = req.query;
+  const query = req.query.query || '';
 
-  let sql = `SELECT * FROM doctors WHERE 
+  let sql = `SELECT * FROM doctors WHERE
     (name LIKE ? OR hospital LIKE ? OR specialization LIKE ?)`;
   let params = [`%${query}%`, `%${query}%`, `%${query}%`];
 

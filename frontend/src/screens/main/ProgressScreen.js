@@ -6,7 +6,18 @@ import { colors } from '../../theme/colors';
 import api from '../../api/api';
 
 const { width } = Dimensions.get('window');
-const CALORIE_GOAL = 1800;
+const CALORIE_GOAL_FALLBACK = 1800; // only used before targets exist (needsMeasurements)
+
+// Fixed pixel heights for every element in a bar column, so the target
+// line (an absolutely-positioned overlay) can compute an exact `bottom`
+// offset that lines up with where the bars actually render. Letting the
+// bar track be `flex:1` (as it originally was) gives it no fixed
+// reference frame — the target line would drift out of alignment with
+// the bars' own percentage-based heights.
+const BAR_AREA_HEIGHT = 90;
+const BAR_HEADER_HEIGHT = 12;
+const BAR_FOOTER_HEIGHT = 14;
+const BAR_GAP = 4;
 
 const ACHIEVEMENTS = [
   { emoji: '🔥', label: '7-day streak!' },
@@ -27,15 +38,18 @@ const c = StyleSheet.create({
   bmiLabelTxt: { fontSize: 10, color: '#fff', fontWeight: '800' },
   xAxis: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   xLabel: { fontSize: 8, color: colors.textSecondary, flex: 1, textAlign: 'center' },
-  barChartWrap: { flexDirection: 'row', height: 130, alignItems: 'flex-end', gap: 6, paddingTop: 24 },
-  barCol: { flex: 1, alignItems: 'center', gap: 4 },
-  barTrack: { flex: 1, width: '100%', justifyContent: 'flex-end', borderRadius: 6, overflow: 'hidden' },
+  barChartWrap: { flexDirection: 'row', alignItems: 'flex-end', gap: 6, position: 'relative' },
+  barCol: { flex: 1, alignItems: 'center', gap: BAR_GAP },
+  barTrack: { height: BAR_AREA_HEIGHT, width: '100%', justifyContent: 'flex-end', borderRadius: 6, overflow: 'hidden' },
   bar: { width: '100%', borderRadius: 6 },
   barPast: { backgroundColor: colors.lavender },
   barEmpty: { backgroundColor: colors.border },
-  barDay: { fontSize: 9, color: colors.textSecondary, fontWeight: '700' },
+  barDay: { fontSize: 9, color: colors.textSecondary, fontWeight: '700', height: BAR_FOOTER_HEIGHT },
   barDayToday: { color: colors.pink },
-  barCalTxt: { fontSize: 8, color: colors.textSecondary, textAlign: 'center' },
+  barCalTxt: { fontSize: 8, color: colors.textSecondary, textAlign: 'center', height: BAR_HEADER_HEIGHT },
+  targetLine: { position: 'absolute', left: 0, right: 0, height: 2, backgroundColor: colors.pink, opacity: 0.7 },
+  targetLineLabel: { position: 'absolute', right: 0, backgroundColor: colors.pink, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 },
+  targetLineLabelTxt: { fontSize: 8, color: '#fff', fontWeight: '800' },
 });
 
 const s = StyleSheet.create({
@@ -69,6 +83,7 @@ const s = StyleSheet.create({
   goalBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   goalDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.pink },
   goalTxt: { fontSize: 10, color: colors.textSecondary, fontWeight: '700' },
+  weeklyTotalTxt: { fontSize: 10, color: colors.textSecondary, marginTop: 10, textAlign: 'center' },
   emptyCard: { alignItems: 'center', paddingVertical: 20, gap: 4 },
   emptyEmoji: { fontSize: 32 },
   emptyTxt: { fontSize: 13, color: colors.textSecondary, fontWeight: '600' },
@@ -152,7 +167,7 @@ function BMIChart({ data }) {
 }
 
 // ── Calorie Bar Chart ─────────────────────────────────
-function CalorieChart({ data }) {
+function CalorieChart({ data, target }) {
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   const weekData = Array(7).fill(0).map((_, idx) => {
@@ -167,10 +182,25 @@ function CalorieChart({ data }) {
     };
   });
 
-  const maxCal = Math.max(...weekData.map(d => d.calories), CALORIE_GOAL);
+  const effectiveTarget = target || CALORIE_GOAL_FALLBACK;
+  const maxCal = Math.max(...weekData.map(d => d.calories), effectiveTarget);
+
+  // Same fixed reference frame as the bars themselves (BAR_AREA_HEIGHT),
+  // offset up from the container's bottom edge by the footer row + gap
+  // that every column reserves below its track — see the BAR_* constants.
+  const targetPct = Math.min(effectiveTarget / maxCal, 1);
+  const targetBottom = BAR_FOOTER_HEIGHT + BAR_GAP + targetPct * BAR_AREA_HEIGHT;
 
   return (
     <View style={c.barChartWrap}>
+      {target != null && (
+        <>
+          <View style={[c.targetLine, { bottom: targetBottom }]} />
+          <View style={[c.targetLineLabel, { bottom: targetBottom + 2 }]}>
+            <Text style={c.targetLineLabelTxt}>{effectiveTarget}</Text>
+          </View>
+        </>
+      )}
       {weekData.map((item, idx) => {
         const pct = maxCal > 0 ? (item.calories / maxCal) * 100 : 0;
         return (
@@ -204,6 +234,7 @@ export default function ProgressScreen({ navigation }) {
   const [period, setPeriod] = useState('Weekly');
   const [bmiHistory, setBmiHistory] = useState([]);
   const [weeklyCalories, setWeeklyCalories] = useState([]);
+  const [dailyTarget, setDailyTarget] = useState(null); // null until /nutrition/today resolves with real targets
 
   const BREAKDOWN = [
     { label: 'Nutrition', pct: weeklyCalories.length > 0 ? 78 : 30 },
@@ -224,6 +255,10 @@ export default function ProgressScreen({ navigation }) {
     try {
       const calRes = await api.get('/food/weekly-calories');
       setWeeklyCalories(calRes.data || []);
+    } catch (_) {}
+    try {
+      const nutRes = await api.get('/nutrition/today');
+      setDailyTarget(nutRes.data?.targets?.daily_calories || null);
     } catch (_) {}
   };
 
@@ -290,13 +325,19 @@ export default function ProgressScreen({ navigation }) {
         <Text style={s.sectionTitle}>🍽️ Calorie Intake This Week</Text>
         <View style={s.card}>
           <View style={s.chartHeader}>
-            <Text style={s.chartTitle}>Daily calories vs {CALORIE_GOAL} goal</Text>
+            <Text style={s.chartTitle}>Daily calories vs {dailyTarget || CALORIE_GOAL_FALLBACK} target</Text>
             <View style={s.goalBadge}>
               <View style={s.goalDot} />
-              <Text style={s.goalTxt}>Goal: {CALORIE_GOAL}</Text>
+              <Text style={s.goalTxt}>Target: {dailyTarget || CALORIE_GOAL_FALLBACK}</Text>
             </View>
           </View>
-          <CalorieChart data={weeklyCalories} />
+          <CalorieChart data={weeklyCalories} target={dailyTarget} />
+          {dailyTarget != null && (
+            <Text style={s.weeklyTotalTxt}>
+              Last 7 days eaten: {weeklyCalories.reduce((sum, d) => sum + Math.round(parseFloat(d.total_calories || 0)), 0)} kcal
+              {'  ·  '}vs current daily target × 7: {dailyTarget * 7} kcal
+            </Text>
+          )}
         </View>
 
         {/* Achievements */}

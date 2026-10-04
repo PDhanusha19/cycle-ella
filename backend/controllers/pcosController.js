@@ -13,7 +13,7 @@ const PYTHON_AI_URL = 'http://localhost:5001';
 // Risk description helper
 const getRiskDescription = (level) => {
   if (level === 'Low') return 'Your symptoms suggest a low risk of PCOS. Keep maintaining a healthy lifestyle!';
-  if (level === 'Moderate') return 'Your symptoms suggest moderate signs of PCOS. We recommend consulting a gynecologist.';
+  if (level === 'Medium') return 'Your symptoms suggest moderate signs of PCOS. We recommend consulting a gynecologist.';
   return 'Your symptoms suggest high signs of PCOS. Please consult a gynecologist as soon as possible.';
 };
 
@@ -75,6 +75,12 @@ const saveSymptomsAndPredict = (req, res) => {
     pimples,
     fast_food,
     regular_exercise,
+    // Provenance: 'tracked' when auto-filled from real logged periods,
+    // 'self_reported' when asked directly or overridden on the review
+    // screen. Captured at submission time — not reconstructable later if
+    // the user logs more periods afterward, so it must be persisted here.
+    cycle_regularity_source,
+    period_duration_days_source,
   } = req.body;
 
   if (!cycle_regularity || period_duration_days === undefined) {
@@ -106,10 +112,12 @@ const saveSymptomsAndPredict = (req, res) => {
           db.query(
             `INSERT INTO pcos_symptoms
               (user_id, cycle_regularity, period_duration_days, weight_gain, hair_growth,
-               skin_darkening, hair_loss, pimples, fast_food, regular_exercise)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               skin_darkening, hair_loss, pimples, fast_food, regular_exercise,
+               cycle_regularity_source, period_duration_days_source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [user_id, cycle_regularity, period_duration_days, !!weight_gain, !!hair_growth,
-             !!skin_darkening, !!hair_loss, !!pimples, !!fast_food, !!regular_exercise],
+             !!skin_darkening, !!hair_loss, !!pimples, !!fast_food, !!regular_exercise,
+             cycle_regularity_source || 'self_reported', period_duration_days_source || 'self_reported'],
             async (err) => {
               if (err) return res.status(500).json({ message: 'Database error', error: err.message });
 
@@ -173,5 +181,6 @@ const saveSymptomsAndPredict = (req, res) => {
 module.exports = {
   getRiskResult,
   getAllAssessments,
-  saveSymptomsAndPredict
+  saveSymptomsAndPredict,
+  calculateAge
 };

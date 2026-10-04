@@ -5,11 +5,13 @@ Now reads your REAL 83-food MySQL database instead of a small
 hardcoded list. Uses your real glycemic_index and pcos_friendly
 columns for more accurate, medically-grounded scoring.
 
-Honest limitation: your foods table has no cycle-phase or
-BMI-suitability tagging, so those specific bonuses from the
-earlier version are gone. Everything else (risk-level scoring,
-diabetes severity, cholesterol filtering, KNN similarity) uses
-your real data and is more accurate than before.
+Honest limitation: your foods table has no cycle-phase tagging,
+so that specific bonus from the earlier version is gone. BMI
+category is handled without needing a tagging column — it nudges
+scoring using each food's own calorie/protein values instead.
+Everything else (risk-level scoring, diabetes severity, cholesterol
+filtering, KNN similarity) uses your real data and is more accurate
+than before.
 
 If MySQL is unreachable, falls back to a small built-in backup
 list so the service doesn't go down entirely — same safety net
@@ -154,15 +156,19 @@ def passes_hard_filters(food, diabetes_level, cholesterol):
     return True
 
 
-def score_food(food, risk_level, diabetes_level="None"):
+def score_food(food, risk_level, diabetes_level="None", bmi_category="normal"):
     """
-    Returns (score, reasons). No phase/BMI-suitability bonus — your
-    real database doesn't tag foods that way, so that dimension is
-    honestly left out rather than faked.
+    Returns (score, reasons). No phase-suitability bonus — your real
+    database doesn't tag foods that way, so that dimension is honestly
+    left out rather than faked. BMI category nudges scoring toward
+    calorie-appropriate choices (lighter foods when managing weight
+    down, denser foods when managing weight up) using each food's own
+    calorie/protein values — no separate tagging needed for this one.
     """
     score = 0
     reasons = []
     gi = food.get("glycemic_index")
+    calories = float(food["calories"])
 
     # --- Real pcos_friendly flag ---
     if food.get("pcos_friendly") in (1, True):
@@ -193,6 +199,21 @@ def score_food(food, risk_level, diabetes_level="None"):
     elif diabetes_level == "Pre-diabetic" and gi == "high":
         score -= 1
 
+    # --- BMI category adjustments ---
+    if bmi_category in ("overweight", "obese"):
+        if calories <= 150:
+            score += 2
+            reasons.append("lower-calorie, good fit while managing weight")
+        elif calories > 300:
+            score -= 2
+    elif bmi_category == "underweight":
+        if calories >= 250:
+            score += 2
+            reasons.append("calorie-dense, helpful for healthy weight gain")
+        elif float(food["protein"]) >= 10:
+            score += 1
+            reasons.append("protein-rich to support weight gain")
+
     return score, reasons
 
 
@@ -207,7 +228,7 @@ def recommend_foods(risk_level="Medium", phase="Follicular", bmi=22,
     for food in FOODS:
         if not passes_hard_filters(food, diabetes_level, cholesterol):
             continue
-        score, reasons = score_food(food, risk_level, diabetes_level)
+        score, reasons = score_food(food, risk_level, diabetes_level, bmi_category)
         scored.append({**food, "score": score, "reasons": reasons})
 
     scored.sort(key=lambda f: -f["score"])
@@ -231,6 +252,8 @@ def recommend_foods(risk_level="Medium", phase="Follicular", bmi=22,
 
 def generate_meal_plan(risk_level="Medium", phase="Follicular", bmi=22,
                         diabetes="None", cholesterol=False):
+    """`phase` is accepted for API compatibility but no longer affects
+    the plan — your real food data has no phase tagging."""
     bmi_category = get_bmi_category(bmi)
     diabetes_level = normalize_diabetes_level(diabetes)
 
@@ -243,7 +266,7 @@ def generate_meal_plan(risk_level="Medium", phase="Follicular", bmi=22,
         ]
         scored = []
         for food in candidates:
-            score, reasons = score_food(food, risk_level, diabetes_level)
+            score, reasons = score_food(food, risk_level, diabetes_level, bmi_category)
             scored.append({**food, "score": score, "reasons": reasons})
         scored.sort(key=lambda f: -f["score"])
         return scored[:n]

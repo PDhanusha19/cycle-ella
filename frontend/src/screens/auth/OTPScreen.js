@@ -8,6 +8,8 @@ import api from '../../api/api';
 export default function OTPScreen({ navigation, route }) {
   const { phone, email, resetMode, contact } = route.params || {};
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [timer, setTimer] = useState(45);
   const [loading, setLoading] = useState(false);
   const inputs = useRef([]);
@@ -33,15 +35,35 @@ export default function OTPScreen({ navigation, route }) {
 const handleVerify = async () => {
     const code = otp.join('');
     if (code.length < 6) { Alert.alert('Error', 'Enter the 6-digit code'); return; }
+
+    if (resetMode) {
+      if (!newPassword || newPassword.length < 6) {
+        Alert.alert('Error', 'Password must be at least 6 characters'); return;
+      }
+      if (newPassword !== confirmPassword) {
+        Alert.alert('Error', 'Passwords do not match'); return;
+      }
+      setLoading(true);
+      try {
+        await api.post('/auth/reset-password', { email: email || contact, otp: code, new_password: newPassword });
+        Alert.alert('Success', 'Your password has been reset! 🌸');
+        navigation.replace('Login');
+      } catch (err) {
+        Alert.alert('Error', err.response?.data?.message || 'Could not reset password');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     setLoading(true);
     try {
       await api.post('/auth/verify-otp', { email: email || contact, otp: code });
-      if (resetMode) navigation.replace('Login');
-      else navigation.replace('HealthProfile');
+      navigation.replace('HealthProfile');
     } catch (err) {
-      // Temporarily skip OTP verification
-      if (resetMode) navigation.replace('Login');
-      else navigation.replace('HealthProfile');
+      // Temporarily skip OTP verification — signup already marks users
+      // verified server-side, so this endpoint isn't implemented yet.
+      navigation.replace('HealthProfile');
     } finally {
       setLoading(false);
     }
@@ -84,9 +106,30 @@ const handleVerify = async () => {
           }
         </Text>
 
+        {resetMode && (
+          <View style={{ width: '100%', gap: 12 }}>
+            <TextInput
+              style={s.otpBox2}
+              placeholder="New password"
+              placeholderTextColor={colors.textSecondary}
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+            />
+            <TextInput
+              style={s.otpBox2}
+              placeholder="Confirm new password"
+              placeholderTextColor={colors.textSecondary}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+            />
+          </View>
+        )}
+
         <TouchableOpacity style={s.primaryBtn} onPress={handleVerify} disabled={loading} activeOpacity={0.85}>
           <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.primaryGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryTxt}>Verify & Continue</Text>}
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryTxt}>{resetMode ? 'Reset Password' : 'Verify & Continue'}</Text>}
           </LinearGradient>
         </TouchableOpacity>
 
@@ -107,6 +150,7 @@ const s = StyleSheet.create({
   otpRow: { flexDirection: 'row', gap: 8, justifyContent: 'center' },
   otpBox: { width: 48, height: 56, backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.border, borderRadius: 16, fontSize: 22, fontWeight: '800', textAlign: 'center', color: colors.textPrimary },
   otpBoxFilled: { borderColor: colors.purple, backgroundColor: colors.lavender },
+  otpBox2: { width: '100%', padding: 16, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.border, borderRadius: 16, fontSize: 14, fontWeight: '500', color: colors.textPrimary },
   resendTxt: { fontSize: 12, color: colors.textSecondary, textAlign: 'center' },
   resendTimer: { color: colors.purple, fontWeight: '800' },
   resendLink: { color: colors.purple, fontWeight: '800', fontSize: 12 },

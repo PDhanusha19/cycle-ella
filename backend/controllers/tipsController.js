@@ -7,6 +7,23 @@ const {
   getExerciseSuggestion,
   calculateHealthScore
 } = require('../ai/tipEngine');
+const { computeCycleStats, computePhase } = require('../utils/cycleCalculations');
+
+// SUM() over food_logs returns DECIMAL strings, and returns a row of
+// zeros when nothing was logged. tipEngine treats a null nutrition object
+// as "no food logged today" and compares the totals numerically, so
+// normalize to numbers and collapse an all-zero day back to null.
+const normalizeNutrition = (row) => {
+  if (!row) return null;
+  const totals = {
+    total_calories: Number(row.total_calories) || 0,
+    total_protein: Number(row.total_protein) || 0,
+    total_carbs: Number(row.total_carbs) || 0,
+    total_fats: Number(row.total_fats) || 0
+  };
+  const loggedSomething = Object.values(totals).some((v) => v > 0);
+  return loggedSomething ? totals : null;
+};
 
 // GET WEATHER DATA
 const getWeather = async (lat, lon) => {
@@ -39,21 +56,37 @@ const generateTips = async (req, res) => {
       );
     });
 
-    // Get cycle phase
+    // Get cycle phase — derived live from period_logs. The cycle_phases
+    // table is never written to anywhere in this codebase, so reading it
+    // always yielded "Unknown". Same source and helpers periodController
+    // uses, so the phase shown here agrees with the Period Tracker.
     const getPhase = () => new Promise((resolve) => {
       db.query(
-        'SELECT * FROM cycle_phases WHERE user_id = ? AND phase_date = ?',
-        [user_id, today],
-        (err, results) => resolve(results?.[0] || null)
+        `SELECT * FROM period_logs
+         WHERE user_id = ? AND deleted_at IS NULL AND start_date IS NOT NULL
+         ORDER BY start_date ASC`,
+        [user_id],
+        (err, results) => {
+          if (err || !results?.length) return resolve(null);
+          const stats = computeCycleStats(results);
+          const phase = computePhase(stats);
+          resolve({ phase_name: phase.phaseName, day_of_cycle: phase.dayOfCycle });
+        }
       );
     });
 
-    // Get nutrition summary
+    // Get nutrition summary — aggregated live from food_logs. The
+    // nutrition_daily table is never written to anywhere in this codebase,
+    // so reading it always yielded no nutrition data.
     const getNutrition = () => new Promise((resolve) => {
       db.query(
-        'SELECT * FROM nutrition_daily WHERE user_id = ? AND log_date = ?',
+        `SELECT COALESCE(SUM(calories),0) AS total_calories,
+                COALESCE(SUM(protein),0)  AS total_protein,
+                COALESCE(SUM(carbs),0)    AS total_carbs,
+                COALESCE(SUM(fats),0)     AS total_fats
+         FROM food_logs WHERE user_id = ? AND log_date = ?`,
         [user_id, today],
-        (err, results) => resolve(results?.[0] || null)
+        (err, results) => resolve(normalizeNutrition(err ? null : results?.[0]))
       );
     });
 
@@ -163,14 +196,18 @@ const getHealthScore = (req, res) => {
 
         const today = new Date().toISOString().split('T')[0];
         db.query(
-          'SELECT * FROM nutrition_daily WHERE user_id = ? AND log_date = ?',
+          `SELECT COALESCE(SUM(calories),0) AS total_calories,
+                  COALESCE(SUM(protein),0)  AS total_protein,
+                  COALESCE(SUM(carbs),0)    AS total_carbs,
+                  COALESCE(SUM(fats),0)     AS total_fats
+           FROM food_logs WHERE user_id = ? AND log_date = ?`,
           [user_id, today],
           (err, nutritionResults) => {
             if (err) return res.status(500).json({ message: 'Database error' });
 
             db.query(
               `SELECT COUNT(DISTINCT log_date) as streak 
-                   FROM food_log 
+                   FROM food_logs 
                    WHERE user_id = ? 
                    AND log_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`,
               [user_id],
@@ -178,7 +215,7 @@ const getHealthScore = (req, res) => {
                 if (err) return res.status(500).json({ message: 'Database error' });
 
                 const score = calculateHealthScore({
-                  nutrition: nutritionResults[0] || null,
+                  nutrition: normalizeNutrition(nutritionResults[0]),
                   periodLogs: periodLogs,
                   riskLevel: riskResults[0]?.risk_level || 'Unknown',
                   logStreak: streakResults[0]?.streak || 0

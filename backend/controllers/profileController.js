@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const { getBMICategory } = require('../utils/healthCalc');
+const { recalculateTargetsForUser } = require('./nutritionController');
 
 // SAVE HEALTH PROFILE (now saves to users table)
 const saveHealthProfile = (req, res) => {
@@ -18,14 +20,6 @@ const saveHealthProfile = (req, res) => {
   );
 };
 
-// BMI Category helper
-const getBMICategory = (bmi) => {
-  if (bmi < 18.5) return 'Underweight';
-  if (bmi < 25)   return 'Normal Weight';
-  if (bmi < 30)   return 'Overweight';
-  return 'Obese';
-};
-
 // SAVE BMI & MEASUREMENTS
 const saveMeasurements = (req, res) => {
   const user_id = req.user.id;
@@ -43,6 +37,13 @@ const saveMeasurements = (req, res) => {
     [user_id, weight, height, bmi],
     (err) => {
       if (err) return res.status(500).json({ message: 'Error saving measurements' });
+
+      // Fire-and-forget — don't block the measurement-save response on
+      // target recalculation. GET /api/nutrition/today lazily recomputes
+      // if this hasn't finished yet by the time it's read.
+      recalculateTargetsForUser(user_id, weight, height, (err2) => {
+        if (err2) console.error('Target recalc after weigh-in failed:', err2.message);
+      });
 
       res.status(201).json({
         message: 'Measurements saved! 🌸',
@@ -109,21 +110,30 @@ const getBMIHistory = (req, res) => {
 };
 
 // UPDATE USER PROFILE
+const UPDATABLE_PROFILE_FIELDS = [
+  'full_name', 'gender', 'date_of_birth', 'phone', 'language',
+  'diabetes', 'cholesterol', 'blood_pressure',
+  'dietary_preference', 'allergies'
+];
+
 const updateProfile = (req, res) => {
   const user_id = req.user.id;
-  const { full_name, gender, date_of_birth, phone, language,
-          diabetes, cholesterol, blood_pressure,
-          dietary_preference, allergies } = req.body;
+
+  // mysql2 rejects `undefined` bind params, so only include fields the
+  // caller actually sent instead of unconditionally writing all columns —
+  // otherwise any partial update (e.g. just `allergies`) crashes the query.
+  const fields = UPDATABLE_PROFILE_FIELDS.filter((f) => req.body[f] !== undefined);
+
+  if (fields.length === 0) {
+    return res.status(400).json({ message: 'No fields to update' });
+  }
+
+  const setClause = fields.map((f) => `${f}=?`).join(', ');
+  const values = fields.map((f) => req.body[f]);
 
   db.query(
-    `UPDATE users SET
-      full_name=?, gender=?, date_of_birth=?, phone=?,
-      language=?, diabetes=?, cholesterol=?, blood_pressure=?,
-      dietary_preference=?, allergies=?
-     WHERE id=?`,
-    [full_name, gender, date_of_birth, phone, language,
-     diabetes, cholesterol, blood_pressure,
-     dietary_preference, allergies, user_id],
+    `UPDATE users SET ${setClause} WHERE id=?`,
+    [...values, user_id],
     (err) => {
       if (err) return res.status(500).json({ message: 'Error updating profile' });
       res.json({ message: 'Profile updated! 🌸' });

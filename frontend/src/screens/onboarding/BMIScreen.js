@@ -113,7 +113,8 @@ function BMIGauge({ bmi }) {
   );
 }
 
-export default function BMIScreen({ navigation }) {
+export default function BMIScreen({ navigation, route }) {
+  const checkInMode = !!route?.params?.checkInMode;
   const [weight, setWeight] = useState('62');
   const [height, setHeight] = useState('162');
   const [weightUnit, setWeightUnit] = useState('kg');
@@ -131,9 +132,13 @@ export default function BMIScreen({ navigation }) {
         weight: weightKg.toFixed(1),
         height: (heightM * 100).toFixed(1),
       });
-    } catch (_) {}
-    setLoading(false);
-    navigation.navigate('PeriodHistory');
+      setLoading(false);
+      if (checkInMode) navigation.goBack();
+      else navigation.navigate('PeriodHistory');
+    } catch (err) {
+      setLoading(false);
+      Alert.alert('Error', err?.response?.data?.message || "Couldn't save your measurements. Please try again.");
+    }
   };
 
   return (
@@ -143,13 +148,13 @@ export default function BMIScreen({ navigation }) {
           <Text style={s.backArrow}>‹</Text>
         </TouchableOpacity>
         <Text style={s.headerTitle}>Measurements</Text>
-        <Text style={s.stepLabel}>Step 2 of 4</Text>
+        <Text style={s.stepLabel}>Step 2 of 5</Text>
       </View>
 
       <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
         <View style={s.stepBar}>
           {[0, 1].map(i => <View key={i} style={[s.stepSeg, s.stepSegDone]} />)}
-          {[2, 3].map(i => <View key={i} style={s.stepSeg} />)}
+          {[2, 3, 4].map(i => <View key={i} style={s.stepSeg} />)}
         </View>
 
         {/* Weight */}

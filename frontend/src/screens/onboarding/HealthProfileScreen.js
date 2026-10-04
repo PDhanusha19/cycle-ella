@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme/colors';
 import api from '../../api/api';
 
-const STEP_BAR = ['Health Profile', 'BMI', 'PCOS', 'History'];
+const STEP_BAR = ['Health Profile', 'BMI', 'History', 'PCOS', 'Review'];
 
 function OptionGroup({ question, options, selected, onSelect }) {
   return (
@@ -49,7 +49,7 @@ export default function HealthProfileScreen({ navigation }) {
           <Text style={s.backArrow}>‹</Text>
         </TouchableOpacity>
         <Text style={s.headerTitle}>Health Profile</Text>
-        <Text style={s.stepLabel}>Step 1 of 4</Text>
+        <Text style={s.stepLabel}>Step 1 of 5</Text>
       </View>
 
       <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">

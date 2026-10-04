@@ -4,14 +4,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme/colors';
 import useStore from '../../store/useStore';
+import { confirmAsync } from '../../utils/confirm';
 
 const SETTINGS_SECTIONS = [
   {
     title: 'Account',
     items: [
-      { icon: '👤', label: 'Edit Profile', sub: 'Update your personal info', color: colors.lavender, screen: 'EditProfile' },
+      { icon: '👤', label: 'Edit Profile', sub: 'Update your personal info', color: colors.lavender, screen: 'HealthProfile' },
       { icon: '🏥', label: 'Health Profile', sub: 'Conditions, preferences', color: colors.lightPink, screen: 'HealthProfile' },
-      { icon: '📏', label: 'BMI & Measurements', sub: 'Weight, height tracker', color: colors.amberBg, screen: 'BMI' },
+      { icon: '📏', label: 'BMI & Measurements', sub: 'Weight, height tracker', color: colors.amberBg, screen: 'BMI', params: { checkInMode: true } },
     ]
   },
   {
@@ -22,6 +23,7 @@ const SETTINGS_SECTIONS = [
       { icon: '📈', label: 'Progress', sub: 'Track your improvements', color: colors.amberBg, screen: 'Progress' },
       { icon: '👩‍⚕️', label: 'Gyno Directory', sub: 'Find PCOS specialists', color: colors.greenBg, screen: 'HealthAssistant', params: { initialTab: 'doctors' } },
       { icon: '💬', label: 'FAQ Chatbot', sub: 'Ask PCOS questions', color: colors.blueBg, screen: 'HealthAssistant', params: { initialTab: 'chat' } },
+      { icon: '📚', label: 'FAQ Library', sub: 'Browse by category', color: colors.amberBg, screen: 'FAQ' },
     ]
   },
   {
@@ -49,22 +51,11 @@ export default function SettingsScreen({ navigation }) {
     ? user.full_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
     : 'CE';
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            await logout();
-            navigation.replace('Splash');
-          }
-        },
-      ]
-    );
+  const handleLogout = async () => {
+    const confirmed = await confirmAsync('Logout', 'Are you sure you want to logout?', 'Logout');
+    if (!confirmed) return;
+    await logout();
+    navigation.replace('Login');
   };
 
   const handlePress = (item) => {
@@ -131,7 +122,7 @@ export default function SettingsScreen({ navigation }) {
 
         {/* Logout */}
         <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
-          <Text style={s.logoutTxt}>🚪 Sign Out</Text>
+          <Text style={s.logoutTxt}>🚪 Logout</Text>
         </TouchableOpacity>
 
         <Text style={s.versionTxt}>Cycle Ella v1.0.0 🌸</Text>

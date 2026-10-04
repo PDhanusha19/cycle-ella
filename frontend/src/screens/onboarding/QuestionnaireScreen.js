@@ -1,91 +1,92 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme/colors';
 import api from '../../api/api';
 
-// These questions map directly to what the trained PCOS model needs.
-// (Age and weight/height are already collected earlier in onboarding;
-// cycle regularity is never asked here — it's read from tracked period
-// data instead, see loadRegularity() below.)
-const QUESTIONS = [
-  {
-    key: 'period_duration_days',
-    q: 'How many days does your period usually last?',
-    options: [
-      { label: '2-3 days', value: 3 },
-      { label: '4-5 days', value: 5 },
-      { label: '6-7 days', value: 7 },
-      { label: '8 or more days', value: 9 },
-    ],
-  },
-  {
-    key: 'weight_gain',
-    q: 'Have you noticed unexplained weight gain recently?',
-    options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],
-  },
-  {
-    key: 'hair_growth',
-    q: 'Do you have excess hair growth on your face, chest, or back?',
-    options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],
-  },
-  {
-    key: 'skin_darkening',
-    q: 'Have you noticed dark patches of skin on your neck, armpits, or groin?',
-    options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],
-  },
-  {
-    key: 'hair_loss',
-    q: 'Have you experienced noticeable hair thinning or hair loss?',
-    options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],
-  },
-  {
-    key: 'pimples',
-    q: 'Do you frequently get acne or pimples?',
-    options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],
-  },
-  {
-    key: 'fast_food',
-    q: 'Do you eat fast food or fried food often (3+ times a week)?',
-    options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],
-  },
-  {
-    key: 'regular_exercise',
-    q: 'Do you exercise regularly (at least 2-3 times a week)?',
-    options: [{ label: 'Yes', value: true }, { label: 'No', value: false }],
-  },
+// Age and weight/height are already collected earlier in onboarding.
+// cycle_regularity and period_duration_days are only asked here when
+// there isn't enough tracked period data yet to auto-fill them (see the
+// resolving effect below) — auto-filled values are still shown, and
+// overridable, on the Review screen that follows this one.
+const BASE_QUESTIONS = [
+  { key: 'weight_gain', q: 'Have you noticed unexplained weight gain recently?', options: [{ label: 'Yes', value: true }, { label: 'No', value: false }] },
+  { key: 'hair_growth', q: 'Do you have excess hair growth on your face, chest, or back?', options: [{ label: 'Yes', value: true }, { label: 'No', value: false }] },
+  { key: 'skin_darkening', q: 'Have you noticed dark patches of skin on your neck, armpits, or groin?', options: [{ label: 'Yes', value: true }, { label: 'No', value: false }] },
+  { key: 'hair_loss', q: 'Have you experienced noticeable hair thinning or hair loss?', options: [{ label: 'Yes', value: true }, { label: 'No', value: false }] },
+  { key: 'pimples', q: 'Do you frequently get acne or pimples?', options: [{ label: 'Yes', value: true }, { label: 'No', value: false }] },
+  { key: 'fast_food', q: 'Do you eat fast food or fried food often (3+ times a week)?', options: [{ label: 'Yes', value: true }, { label: 'No', value: false }] },
+  { key: 'regular_exercise', q: 'Do you exercise regularly (at least 2-3 times a week)?', options: [{ label: 'Yes', value: true }, { label: 'No', value: false }] },
 ];
 
+const BLEED_QUESTION = {
+  key: 'period_duration_days',
+  q: 'How many days does your period usually last?',
+  options: [
+    { label: '2-3 days', value: 3 },
+    { label: '4-5 days', value: 5 },
+    { label: '6-7 days', value: 7 },
+    { label: '8 or more days', value: 9 },
+  ],
+};
+
+const REGULARITY_QUESTION = {
+  key: 'cycle_regularity',
+  q: 'Are your periods usually regular or irregular?',
+  options: [
+    { label: 'Regular — consistent timing', value: 'Regular' },
+    { label: 'Irregular — timing varies a lot', value: 'Irregular' },
+  ],
+};
+
 export default function QuestionnaireScreen({ navigation }) {
+  const [resolving, setResolving] = useState(true);
+  const [trackedRegularity, setTrackedRegularity] = useState(null); // { value, source: 'tracked' } | null
+  const [trackedBleedDuration, setTrackedBleedDuration] = useState(null);
   const [answers, setAnswers] = useState({});
   const [qIdx, setQIdx] = useState(0);
-  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(null);
-  const [regularityIsDefault, setRegularityIsDefault] = useState(false);
-  const regularityRef = React.useRef(null);
 
-  // Cycle regularity is never asked here — read it from tracked period
-  // data instead. Falls back to 'Regular' if there isn't enough tracked
-  // data yet (e.g. onboarding was skipped), and flags that so the
-  // result screen can be upfront about the default.
   useEffect(() => {
-    regularityRef.current = api.get('/period/regularity')
-      .then((res) => {
-        const status = res.data?.status;
-        if (status === 'Regular' || status === 'Irregular') {
-          setRegularityIsDefault(false);
-          return status;
-        }
-        setRegularityIsDefault(true);
-        return 'Regular';
-      })
-      .catch(() => {
-        setRegularityIsDefault(true);
-        return 'Regular';
-      });
+    Promise.all([
+      api.get('/period/regularity').catch(() => null),
+      api.get('/period/summary').catch(() => null),
+    ]).then(([regRes, sumRes]) => {
+      const status = regRes?.data?.status;
+      if (status === 'Regular' || status === 'Irregular') {
+        setTrackedRegularity({ value: status, source: 'tracked' });
+      }
+      const hasEnough = sumRes?.data?.hasEnoughForPersonalization;
+      const avgBleed = sumRes?.data?.avgBleedDurationDays;
+      if (hasEnough && avgBleed) {
+        setTrackedBleedDuration({ value: Math.round(avgBleed), source: 'tracked' });
+      }
+      setResolving(false);
+    });
   }, []);
+
+  const QUESTIONS = useMemo(() => {
+    const list = [];
+    if (!trackedBleedDuration) list.push(BLEED_QUESTION);
+    list.push(...BASE_QUESTIONS);
+    if (!trackedRegularity) list.push(REGULARITY_QUESTION);
+    return list;
+  }, [trackedRegularity, trackedBleedDuration]);
+
+  if (resolving) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
+        <View style={s.header}>
+          <Text style={s.headerTitle}>PCOS Assessment</Text>
+          <Text style={s.stepLabel}>Step 4 of 5</Text>
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={colors.pink} size="large" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const q = QUESTIONS[qIdx];
   const progress = ((qIdx + 1) / QUESTIONS.length) * 100;
@@ -93,101 +94,31 @@ export default function QuestionnaireScreen({ navigation }) {
 
   const isSelected = (optionValue) => selectedValue === optionValue;
 
-  const handleNext = async () => {
+  const handleNext = () => {
     if (selectedValue === undefined) return;
     if (qIdx < QUESTIONS.length - 1) { setQIdx(qIdx + 1); return; }
 
     setLoading(true);
-    setErrorMsg(null);
-    try {
-      const cycle_regularity = await regularityRef.current;
-      const res = await api.post('/pcos/assessment', { ...answers, cycle_regularity });
-      setResult({
-        risk_level: (res.data.risk_level || 'Medium').toLowerCase(),
-        probability: res.data.pcos_probability_percent,
-        description: res.data.description,
-        top_factors: res.data.top_contributing_factors || [],
-      });
-    } catch (err) {
-      const backendMsg = err?.response?.data?.message;
-      setErrorMsg(backendMsg || 'Something went wrong while calculating your risk. Please try again.');
+    const finalAnswers = { ...answers };
+    const provenance = {};
+
+    if (trackedBleedDuration) {
+      finalAnswers.period_duration_days = trackedBleedDuration.value;
+      provenance.period_duration_days = 'tracked';
+    } else {
+      provenance.period_duration_days = 'self_reported';
     }
+
+    if (trackedRegularity) {
+      finalAnswers.cycle_regularity = trackedRegularity.value;
+      provenance.cycle_regularity = 'tracked';
+    } else {
+      provenance.cycle_regularity = 'self_reported';
+    }
+
+    navigation.navigate('ReviewAssessment', { answers: finalAnswers, provenance });
     setLoading(false);
   };
-
-  const RISK_CONFIG = {
-    low: { emoji: '✅', label: 'Low Risk', color: colors.green, bg: colors.greenBg },
-    medium: { emoji: '⚠️', label: 'Medium Risk', color: '#b8600a', bg: colors.amberBg },
-    moderate: { emoji: '⚠️', label: 'Medium Risk', color: '#b8600a', bg: colors.amberBg },
-    high: { emoji: '🔴', label: 'High Risk', color: colors.pink, bg: colors.lightPink },
-  };
-
-  if (errorMsg) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
-        <View style={s.header}>
-          <Text style={s.headerTitle}>PCOS Assessment</Text>
-          <Text style={s.stepLabel}>Step 4 of 4</Text>
-        </View>
-        <ScrollView contentContainerStyle={[s.scroll, { alignItems: 'center' }]}>
-          <View style={[s.riskCard, { backgroundColor: colors.amberBg }]}>
-            <Text style={{ fontSize: 40 }}>⚠️</Text>
-            <Text style={[s.riskMsg, { color: '#b8600a' }]}>{errorMsg}</Text>
-          </View>
-          <TouchableOpacity style={s.primaryBtn} onPress={() => setErrorMsg(null)} activeOpacity={0.85}>
-            <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.primaryGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-              <Text style={s.primaryTxt}>Try Again</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  if (result) {
-    const cfg = RISK_CONFIG[result.risk_level] || RISK_CONFIG.medium;
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
-        <View style={s.header}>
-          <Text style={s.headerTitle}>PCOS Assessment</Text>
-          <Text style={s.stepLabel}>Step 4 of 4</Text>
-        </View>
-        <ScrollView contentContainerStyle={[s.scroll, { alignItems: 'center' }]}>
-          <View style={[s.riskCard, { backgroundColor: cfg.bg }]}>
-            <Text style={{ fontSize: 48 }}>{cfg.emoji}</Text>
-            <Text style={[s.riskLabel, { color: cfg.color }]}>{cfg.label}</Text>
-            {result.probability !== undefined && (
-              <Text style={[s.riskPct, { color: cfg.color }]}>{result.probability}% probability</Text>
-            )}
-            <Text style={[s.riskMsg, { color: cfg.color }]}>{result.description}</Text>
-          </View>
-
-          {result.top_factors.length > 0 && (
-            <View style={s.infoBox}>
-              <Text style={s.infoTxt}>
-                💡 The biggest contributing factors in your answers: {result.top_factors.join(', ')}
-              </Text>
-            </View>
-          )}
-
-          {regularityIsDefault && (
-            <View style={s.infoBox}>
-              <Text style={s.infoTxt}>
-                📅 We don't have enough tracked periods yet, so your cycle-regularity factor used a default value. Retake this after logging 2+ periods for a more accurate result.
-              </Text>
-            </View>
-          )}
-
-          <Text style={s.disclaimer}>⚕️ This is a risk indicator, not a medical diagnosis.</Text>
-          <TouchableOpacity style={s.primaryBtn} onPress={() => navigation.replace('Main')} activeOpacity={0.85}>
-            <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.primaryGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-              <Text style={s.primaryTxt}>Continue</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
@@ -196,12 +127,13 @@ export default function QuestionnaireScreen({ navigation }) {
           <Text style={s.backArrow}>‹</Text>
         </TouchableOpacity>
         <Text style={s.headerTitle}>PCOS Assessment</Text>
-        <Text style={s.stepLabel}>Step 4 of 4</Text>
+        <Text style={s.stepLabel}>Step 4 of 5</Text>
       </View>
 
       <ScrollView contentContainerStyle={s.scroll}>
         <View style={s.stepBar}>
           {[0, 1, 2, 3].map(i => <View key={i} style={[s.stepSeg, s.stepSegDone]} />)}
+          <View style={s.stepSeg} />
         </View>
 
         <View style={s.progressBar}>
@@ -233,7 +165,7 @@ export default function QuestionnaireScreen({ navigation }) {
           activeOpacity={0.85}
         >
           <LinearGradient colors={['#E5457A', '#9B4DB5']} style={s.primaryGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryTxt}>{qIdx === QUESTIONS.length - 1 ? 'See Results →' : 'Next Question →'}</Text>}
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryTxt}>{qIdx === QUESTIONS.length - 1 ? 'Review Answers →' : 'Next Question →'}</Text>}
           </LinearGradient>
         </TouchableOpacity>
       </ScrollView>
@@ -266,11 +198,4 @@ const s = StyleSheet.create({
   primaryBtn: { borderRadius: 16, overflow: 'hidden', shadowColor: '#E5457A', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 24, elevation: 8 },
   primaryGrad: { paddingVertical: 16, alignItems: 'center', borderRadius: 16 },
   primaryTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  riskCard: { borderRadius: 20, padding: 24, alignItems: 'center', gap: 12, width: '100%' },
-  riskLabel: { fontSize: 22, fontWeight: '900' },
-  riskPct: { fontSize: 14, fontWeight: '700' },
-  riskMsg: { fontSize: 14, textAlign: 'center', lineHeight: 22 },
-  infoBox: { backgroundColor: colors.lavender, borderRadius: 16, padding: 16 },
-  infoTxt: { fontSize: 12, color: colors.purple, fontWeight: '700', lineHeight: 20 },
-  disclaimer: { fontSize: 11, color: colors.textSecondary, textAlign: 'center', fontStyle: 'italic' },
 });

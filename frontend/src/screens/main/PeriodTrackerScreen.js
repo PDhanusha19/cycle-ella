@@ -4,35 +4,27 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme/colors';
 import api from '../../api/api';
+import MiniCalendarPicker, { MONTH_NAMES } from '../../components/MiniCalendarPicker';
 
-const DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const SYMPTOMS = ['😣 Cramps', '🤰 Bloating', '😔 Mood', '😴 Fatigue', '🤕 Headache', '🍫 Cravings'];
 
+// 3 phases only — no "Ovulatory" label. A labeled ovulation phase implies
+// knowing when ovulation happens, which is exactly the claim this app
+// doesn't make (anovulatory cycles are the defining feature of PCOS).
 const PHASE_INFO = {
   menstrual: { name: 'Menstrual Phase', color: colors.pink, bg: colors.lightPink, desc: 'Your body is shedding the uterine lining. Rest and warm foods are recommended.', tip: '🍵 Focus: Iron-rich foods, warm herbal teas, gentle movement' },
-  follicular: { name: 'Follicular Phase', color: colors.blue, bg: colors.blueBg, desc: 'Estrogen starts rising. Energy levels begin to increase — a good time to exercise.', tip: '🥗 Focus: Antioxidant foods, lean protein, leafy greens' },
-  ovulatory: { name: 'Ovulatory Phase', color: colors.purple, bg: colors.lavender, desc: 'Your body is releasing an egg. Estrogen peaks and energy levels are high.', tip: '🥑 Focus: Protein, iron-rich foods, leafy greens' },
-  luteal: { name: 'Luteal Phase', color: colors.amber, bg: colors.amberBg, desc: 'Progesterone rises after ovulation. You may experience some PMS symptoms.', tip: '🍫 Focus: Magnesium-rich foods, complex carbs, reduce caffeine' },
+  follicular: { name: 'Follicular Phase', color: colors.blue, bg: colors.blueBg, desc: 'Estrogen is rising and energy levels build through this phase.', tip: '🥗 Focus: Antioxidant foods, lean protein, leafy greens' },
+  luteal: { name: 'Luteal Phase', color: colors.amber, bg: colors.amberBg, desc: 'The back half of your cycle — you may notice some PMS symptoms.', tip: '🍫 Focus: Magnesium-rich foods, complex carbs, reduce caffeine' },
   unknown: { name: 'No Data Yet', color: colors.textSecondary, bg: colors.lavender, desc: 'Log your period to start tracking your cycle phases and get personalized tips.', tip: '👆 Tap two dates on the calendar: start, then end' },
 };
 
-function buildCalendar(year, month) {
-  const firstDay = new Date(year, month - 1, 1).getDay();
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const cells = [];
-  for (let i = 0; i < firstDay; i++) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  return cells;
-}
-
-function RangeConfirmModal({ visible, startLabel, endLabel, duration, onClose, onConfirm, loading }) {
+function RangeConfirmModal({ visible, title, startLabel, endLabel, duration, onClose, onConfirm, loading, confirmLabel = 'Confirm ✓' }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={dm.overlay}>
         <View style={dm.sheet}>
           <Text style={dm.emoji}>🔴</Text>
-          <Text style={dm.title}>Log This Period?</Text>
+          <Text style={dm.title}>{title}</Text>
           <View style={dm.rangeBox}>
             <View style={dm.rangeCol}>
               <Text style={dm.rangeLabel}>START</Text>
@@ -51,7 +43,7 @@ function RangeConfirmModal({ visible, startLabel, endLabel, duration, onClose, o
             </TouchableOpacity>
             <TouchableOpacity style={dm.confirmBtn} onPress={onConfirm} disabled={loading}>
               <LinearGradient colors={['#E5457A', '#9B4DB5']} style={dm.confirmGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={dm.confirmTxt}>Confirm ✓</Text>}
+                {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={dm.confirmTxt}>{confirmLabel}</Text>}
               </LinearGradient>
             </TouchableOpacity>
           </View>
@@ -69,22 +61,33 @@ export default function PeriodTrackerScreen({ navigation }) {
   const [predictedDays, setPredictedDays] = useState([]);
   const [phase, setPhase] = useState('unknown');
   const [phaseDay, setPhaseDay] = useState(0);
+  const [phaseMessage, setPhaseMessage] = useState(null);
+  const [isLate, setIsLate] = useState(false);
   const [symptoms, setSymptoms] = useState([]);
-  const [predictions, setPredictions] = useState({ nextPeriod: '—', ovulationWindow: '—', avgCycle: '28d' });
-  const [regularity, setRegularity] = useState({ status: null, message: '', avgCycle: null, variance: null });
+  const [predictions, setPredictions] = useState({ nextPeriod: '—', avgCycle: '28d' });
+  const [summary, setSummary] = useState({ hasEnoughForPersonalization: false });
+  const [regularity, setRegularity] = useState({ status: null, message: '' });
   const [hasAssessment, setHasAssessment] = useState(true); // assume true until checked, so the button doesn't flash in
+  const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const [pendingStart, setPendingStart] = useState(null);
   const [pendingEnd, setPendingEnd] = useState(null);
   const [showRangeModal, setShowRangeModal] = useState(false);
-
-  const cells = buildCalendar(viewYear, viewMonth);
-  const today = now.getDate();
-  const isCurrentMonth = viewYear === now.getFullYear() && viewMonth === now.getMonth() + 1;
+  const [editingEntryId, setEditingEntryId] = useState(null);
 
   useEffect(() => { loadCalendarData(); }, [viewYear, viewMonth]);
-  useEffect(() => { loadPhaseAndPredictions(); loadTodaySymptoms(); loadRegularity(); loadAssessmentStatus(); }, []);
+  useEffect(() => { refreshAll(); }, []);
+
+  const refreshAll = () => {
+    loadCalendarData();
+    loadPhaseAndPredictions();
+    loadTodaySymptoms();
+    loadRegularity();
+    loadAssessmentStatus();
+    loadHistory();
+    loadSummary();
+  };
 
   const loadCalendarData = async () => {
     try {
@@ -99,12 +102,13 @@ export default function PeriodTrackerScreen({ navigation }) {
       const phaseRes = await api.get('/period/phase');
       setPhase(phaseRes.data?.phase_name?.toLowerCase() || 'unknown');
       setPhaseDay(phaseRes.data?.day_of_cycle || 0);
+      setPhaseMessage(phaseRes.data?.message || null);
+      setIsLate(!!phaseRes.data?.is_late);
     } catch (_) {}
     try {
       const predRes = await api.get('/period/predictions');
       setPredictions({
         nextPeriod: predRes.data?.nextPeriod || '—',
-        ovulationWindow: predRes.data?.ovulationWindow || '—',
         avgCycle: predRes.data?.avgCycle || '28d',
       });
     } catch (_) {}
@@ -114,6 +118,20 @@ export default function PeriodTrackerScreen({ navigation }) {
     try {
       const res = await api.get('/period/regularity');
       setRegularity(res.data || {});
+    } catch (_) {}
+  };
+
+  const loadSummary = async () => {
+    try {
+      const res = await api.get('/period/summary');
+      setSummary(res.data || {});
+    } catch (_) {}
+  };
+
+  const loadHistory = async () => {
+    try {
+      const res = await api.get('/period/history');
+      setHistory(res.data?.entries || []);
     } catch (_) {}
   };
 
@@ -149,14 +167,15 @@ export default function PeriodTrackerScreen({ navigation }) {
   };
 
   const dateToObj = (day) => new Date(viewYear, viewMonth - 1, day);
+  const toISO = (sel) => `${sel.year}-${String(sel.month).padStart(2, '0')}-${String(sel.day).padStart(2, '0')}`;
 
   const onDayPress = (d) => {
     if (!d) return;
     const tapped = dateToObj(d);
-    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (tapped > todayDate) return;
 
-    if (!pendingStart) {
+    // A complete pair already selected (fresh, or pre-filled by "Edit")
+    // means this tap starts a brand new selection.
+    if (!pendingStart || pendingEnd) {
       setPendingStart({ day: d, month: viewMonth, year: viewYear });
       setPendingEnd(null);
       return;
@@ -183,27 +202,57 @@ export default function PeriodTrackerScreen({ navigation }) {
     setPendingStart(null);
     setPendingEnd(null);
     setShowRangeModal(false);
+    setEditingEntryId(null);
+  };
+
+  // A 409 overlap response offers extending the conflicting entry instead
+  // of failing outright — this is how the server resolves "extend" (no
+  // separate endpoint: it's just a normal edit of the existing entry).
+  const handleOverlapConflict = (err, attemptedEndDate) => {
+    const data = err.response?.data;
+    if (err.response?.status !== 409 || !data?.conflict) return false;
+
+    Alert.alert('Period Overlap', data.message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Extend', onPress: async () => {
+          try {
+            await api.put(`/period/entries/${data.conflict.id}`, { end_date: attemptedEndDate });
+            Alert.alert('Extended 🌸', 'Your period entry was extended.');
+            refreshAll();
+          } catch (e2) {
+            Alert.alert('Error', e2.response?.data?.message || 'Could not extend period');
+          }
+        },
+      },
+    ]);
+    return true;
   };
 
   const confirmRangeLog = async () => {
     if (!pendingStart || !pendingEnd) return;
     setLoading(true);
-    const startStr = `${pendingStart.year}-${String(pendingStart.month).padStart(2, '0')}-${String(pendingStart.day).padStart(2, '0')}`;
-    const startObj = new Date(pendingStart.year, pendingStart.month - 1, pendingStart.day);
-    const endObj = new Date(pendingEnd.year, pendingEnd.month - 1, pendingEnd.day);
-    const duration = Math.round((endObj - startObj) / (1000 * 60 * 60 * 24)) + 1;
+    const startStr = toISO(pendingStart);
+    const endStr = toISO(pendingEnd);
 
     try {
-      await api.post('/period/start', { start_date: startStr, duration_days: duration });
+      if (editingEntryId) {
+        await api.put(`/period/entries/${editingEntryId}`, { start_date: startStr, end_date: endStr });
+        Alert.alert('Updated! 🌸', 'Period entry updated.');
+      } else {
+        await api.post('/period/start', { start_date: startStr, end_date: endStr });
+        Alert.alert('Logged! 🌸', 'Period saved.');
+      }
       setShowRangeModal(false);
-      Alert.alert('Logged! 🌸', `Period saved: ${duration} day${duration !== 1 ? 's' : ''}`);
       setPendingStart(null);
       setPendingEnd(null);
-      loadCalendarData();
-      loadPhaseAndPredictions();
-      loadRegularity();
+      setEditingEntryId(null);
+      refreshAll();
     } catch (err) {
-      Alert.alert('Error', err.response?.data?.message || 'Could not log period');
+      setShowRangeModal(false);
+      if (!handleOverlapConflict(err, endStr)) {
+        Alert.alert('Error', err.response?.data?.message || 'Could not save period');
+      }
     } finally {
       setLoading(false);
     }
@@ -214,11 +263,11 @@ export default function PeriodTrackerScreen({ navigation }) {
     try {
       await api.post('/period/start');
       Alert.alert('Period Started 🌸', 'Your period has been logged for today!');
-      loadCalendarData();
-      loadPhaseAndPredictions();
-      loadRegularity();
+      refreshAll();
     } catch (err) {
-      Alert.alert('Error', err.response?.data?.message || 'Could not start period');
+      if (!handleOverlapConflict(err, new Date().toISOString().split('T')[0])) {
+        Alert.alert('Error', err.response?.data?.message || 'Could not start period');
+      }
     } finally {
       setLoading(false);
     }
@@ -228,14 +277,45 @@ export default function PeriodTrackerScreen({ navigation }) {
     setLoading(true);
     try {
       const res = await api.put('/period/end', {});
-      Alert.alert('Period Ended 🌸', `Duration: ${res.data?.duration_days || 5} days`);
-      loadCalendarData();
-      loadRegularity();
+      Alert.alert('Period Ended 🌸', `Duration: ${res.data?.entry?.duration_days ?? '—'} days`);
+      refreshAll();
     } catch (err) {
       Alert.alert('Error', err.response?.data?.message || 'Could not end period');
     } finally {
       setLoading(false);
     }
+  };
+
+  const startEditingEntry = (entry) => {
+    const start = new Date(entry.start_date);
+    const end = entry.end_date ? new Date(entry.end_date) : start;
+    setEditingEntryId(entry.id);
+    setPendingStart({ day: start.getDate(), month: start.getMonth() + 1, year: start.getFullYear() });
+    setPendingEnd({ day: end.getDate(), month: end.getMonth() + 1, year: end.getFullYear() });
+    setViewMonth(start.getMonth() + 1);
+    setViewYear(start.getFullYear());
+  };
+
+  const fmtEntryDate = (iso) => {
+    const d = new Date(iso);
+    return `${MONTH_NAMES[d.getMonth()].slice(0, 3)} ${d.getDate()}`;
+  };
+
+  const deleteHistoryEntry = (entry) => {
+    const label = `${fmtEntryDate(entry.start_date)}${entry.end_date ? ` – ${fmtEntryDate(entry.end_date)}` : ' (ongoing)'}`;
+    Alert.alert('Delete this period?', `${label} will be removed.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await api.delete(`/period/entries/${entry.id}`);
+            refreshAll();
+          } catch (err) {
+            Alert.alert('Error', err.response?.data?.message || 'Could not delete period');
+          }
+        },
+      },
+    ]);
   };
 
   const phaseInfo = PHASE_INFO[phase] || PHASE_INFO.unknown;
@@ -245,6 +325,9 @@ export default function PeriodTrackerScreen({ navigation }) {
 
     if (pendingStart && pendingStart.day === d && pendingStart.month === viewMonth && pendingStart.year === viewYear) {
       return { backgroundColor: colors.pink, borderRadius: 99 };
+    }
+    if (pendingEnd && pendingEnd.day === d && pendingEnd.month === viewMonth && pendingEnd.year === viewYear) {
+      return { backgroundColor: colors.purple, borderRadius: 99 };
     }
     if (pendingStart && !pendingEnd) {
       const startObj = new Date(pendingStart.year, pendingStart.month - 1, pendingStart.day);
@@ -271,10 +354,12 @@ export default function PeriodTrackerScreen({ navigation }) {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
       <RangeConfirmModal
         visible={showRangeModal}
+        title={editingEntryId ? 'Update This Period?' : 'Log This Period?'}
+        confirmLabel={editingEntryId ? 'Save ✓' : 'Confirm ✓'}
         startLabel={fmtLabel(pendingStart)}
         endLabel={fmtLabel(pendingEnd)}
         duration={rangeDuration}
-        onClose={cancelSelection}
+        onClose={() => setShowRangeModal(false)}
         onConfirm={confirmRangeLog}
         loading={loading}
       />
@@ -317,19 +402,24 @@ export default function PeriodTrackerScreen({ navigation }) {
         )}
 
         <View style={s.card}>
-          <View style={s.calHeader}>
-            <TouchableOpacity style={s.calNav} onPress={prevMonth}><Text style={s.calNavTxt}>‹</Text></TouchableOpacity>
-            <Text style={s.calMonth}>{MONTH_NAMES[viewMonth - 1]} {viewYear}</Text>
-            <TouchableOpacity style={s.calNav} onPress={nextMonth}><Text style={s.calNavTxt}>›</Text></TouchableOpacity>
-          </View>
-          <View style={s.calGrid}>
-            {DAYS.map((d, i) => <Text key={i} style={s.dayLabel}>{d}</Text>)}
-            {cells.map((d, i) => (
-              <TouchableOpacity key={i} disabled={!d} activeOpacity={0.6} onPress={() => onDayPress(d)} style={[s.dayCell, d && getDayStyle(d), isCurrentMonth && d === today && s.dayCellToday]}>
-                {d && <Text style={[s.dayNum, isCurrentMonth && d === today && s.dayNumToday]}>{d}</Text>}
-              </TouchableOpacity>
-            ))}
-          </View>
+          {editingEntryId && (
+            <View style={s.editingBanner}>
+              <Text style={s.editingTxt}>✏️ Editing {fmtLabel(pendingStart)} – {fmtLabel(pendingEnd)}. Tap new dates, or save as-is.</Text>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity onPress={() => setShowRangeModal(true)}><Text style={s.hintCancelTxt}>Save</Text></TouchableOpacity>
+                <TouchableOpacity onPress={cancelSelection}><Text style={s.hintCancelTxt}>Cancel</Text></TouchableOpacity>
+              </View>
+            </View>
+          )}
+          <MiniCalendarPicker
+            year={viewYear}
+            month={viewMonth}
+            onPrevMonth={prevMonth}
+            onNextMonth={nextMonth}
+            onDayPress={onDayPress}
+            getDayStyle={getDayStyle}
+            disableFutureDates
+          />
 
           {pendingStart && !pendingEnd ? (
             <View style={s.hintBoxActive}>
@@ -337,7 +427,7 @@ export default function PeriodTrackerScreen({ navigation }) {
               <TouchableOpacity onPress={cancelSelection}><Text style={s.hintCancelTxt}>Cancel</Text></TouchableOpacity>
             </View>
           ) : (
-            <Text style={s.tapHint}>💡 Tap a start date, then an end date to log a period</Text>
+            !editingEntryId && <Text style={s.tapHint}>💡 Tap a start date, then an end date to log a period</Text>
           )}
 
           <View style={s.legend}>
@@ -349,9 +439,9 @@ export default function PeriodTrackerScreen({ navigation }) {
 
         <View style={[s.phaseCard, { backgroundColor: phaseInfo.bg }]}>
           <Text style={[s.phaseName, { color: phaseInfo.color }]}>{phaseInfo.name}</Text>
-          {phaseDay > 0 && <Text style={[s.phaseDay, { color: phaseInfo.color }]}>Day {phaseDay} of your cycle</Text>}
-          <Text style={s.phaseDesc}>{phaseInfo.desc}</Text>
-          <Text style={[s.phaseTip, { color: phaseInfo.color }]}>{phaseInfo.tip}</Text>
+          {phaseDay > 0 && <Text style={[s.phaseDay, { color: phaseInfo.color }]}>Day {phaseDay} of your cycle{isLate ? ' (running long)' : ''}</Text>}
+          <Text style={s.phaseDesc}>{phaseMessage || phaseInfo.desc}</Text>
+          {!phaseMessage && <Text style={[s.phaseTip, { color: phaseInfo.color }]}>{phaseInfo.tip}</Text>}
         </View>
 
         <View style={s.actionRow}>
@@ -383,16 +473,74 @@ export default function PeriodTrackerScreen({ navigation }) {
             </View>
             <View style={s.predDivider} />
             <View style={s.predCol}>
-              <Text style={[s.predVal, { color: colors.purple }]}>{predictions.ovulationWindow}</Text>
-              <Text style={s.predLabel}>Ovulation Window</Text>
-            </View>
-            <View style={s.predDivider} />
-            <View style={s.predCol}>
               <Text style={s.predVal}>{predictions.avgCycle}</Text>
               <Text style={s.predLabel}>Avg. Cycle</Text>
             </View>
+            <View style={s.predDivider} />
+            <View style={s.predCol}>
+              <Text style={s.predVal}>{summary.cyclesLoggedLast12Months ?? '—'}</Text>
+              <Text style={s.predLabel}>Cycles Logged (12mo)</Text>
+            </View>
           </View>
         </View>
+
+        <Text style={s.sectionTitle}>Cycle Summary</Text>
+        {summary.hasEnoughForPersonalization ? (
+          <View style={s.card}>
+            <View style={s.summaryGrid}>
+              <View style={s.summaryTile}>
+                <Text style={s.summaryVal}>{summary.avgIntervalDays}d</Text>
+                <Text style={s.summaryLabel}>Avg. Interval</Text>
+              </View>
+              <View style={s.summaryTile}>
+                <Text style={s.summaryVal}>±{summary.varianceDays}d</Text>
+                <Text style={s.summaryLabel}>Variance</Text>
+              </View>
+              <View style={s.summaryTile}>
+                <Text style={s.summaryVal}>{summary.cyclesLoggedLast12Months}</Text>
+                <Text style={s.summaryLabel}>Cycles (12mo)</Text>
+              </View>
+              <View style={s.summaryTile}>
+                <Text style={s.summaryVal}>{summary.longestGapDays}d</Text>
+                <Text style={s.summaryLabel}>Longest Gap</Text>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={s.emptyCard}>
+            <Text style={s.emptyTxt}>Log at least 3 periods to see your cycle summary.</Text>
+          </View>
+        )}
+
+        <Text style={s.sectionTitle}>Cycle History</Text>
+        {history.length === 0 ? (
+          <View style={s.emptyCard}>
+            <Text style={s.emptyTxt}>No periods logged yet — tap a date above to get started.</Text>
+          </View>
+        ) : (
+          <View style={s.card}>
+            {history.map((entry, i) => (
+              <View key={entry.id} style={[s.historyRow, i === history.length - 1 && s.historyRowLast]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.historyDates}>
+                    {fmtEntryDate(entry.start_date)}{entry.end_date ? ` – ${fmtEntryDate(entry.end_date)}` : ' (ongoing)'}
+                    {entry.is_estimated ? <Text style={s.historyEstimated}>  · estimated</Text> : null}
+                  </Text>
+                  <Text style={s.historySub}>
+                    {entry.duration_days ? `${entry.duration_days} day bleed` : 'Not yet ended'}
+                    {entry.interval_to_next_days ? ` · ${entry.interval_to_next_days}d to next` : ''}
+                  </Text>
+                </View>
+                <TouchableOpacity style={s.historyIconBtn} onPress={() => startEditingEntry(entry)}>
+                  <Text style={s.historyIconTxt}>✏️</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.historyIconBtn} onPress={() => deleteHistoryEntry(entry)}>
+                  <Text style={s.historyIconTxt}>🗑️</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -429,16 +577,8 @@ const s = StyleSheet.create({
   gynoBtn: { marginTop: 10, alignSelf: 'flex-start', backgroundColor: colors.pink, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 99 },
   gynoBtnTxt: { fontSize: 11, fontWeight: '800', color: '#fff' },
   card: { backgroundColor: colors.surface, borderRadius: 20, padding: 16, borderWidth: 1, borderColor: colors.border },
-  calHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  calNav: { width: 36, height: 36, borderRadius: 10, backgroundColor: colors.lavender, alignItems: 'center', justifyContent: 'center' },
-  calNavTxt: { fontSize: 18, color: colors.purple, fontWeight: '700' },
-  calMonth: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
-  calGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-  dayLabel: { width: '14.28%', textAlign: 'center', fontSize: 11, fontWeight: '800', color: colors.textSecondary, paddingVertical: 4 },
-  dayCell: { width: '14.28%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  dayCellToday: { backgroundColor: colors.pink, borderRadius: 99 },
-  dayNum: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
-  dayNumToday: { color: '#fff', fontWeight: '900' },
+  editingBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.lavender, borderRadius: 12, padding: 10, marginBottom: 10, gap: 8 },
+  editingTxt: { fontSize: 11, color: colors.purple, fontWeight: '700', flex: 1 },
   tapHint: { fontSize: 10, color: colors.textSecondary, textAlign: 'center', marginTop: 8, fontStyle: 'italic' },
   hintBoxActive: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.lightPink, borderRadius: 12, padding: 10, marginTop: 8 },
   hintActiveTxt: { fontSize: 11, color: colors.pink, fontWeight: '700', flex: 1 },
@@ -469,4 +609,17 @@ const s = StyleSheet.create({
   predDivider: { width: 1, height: 40, backgroundColor: colors.border },
   predVal: { fontSize: 15, fontWeight: '900', color: colors.textPrimary },
   predLabel: { fontSize: 10, color: colors.textSecondary, fontWeight: '600', textAlign: 'center' },
+  summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  summaryTile: { width: '45%', alignItems: 'center', gap: 4, paddingVertical: 8 },
+  summaryVal: { fontSize: 17, fontWeight: '900', color: colors.textPrimary },
+  summaryLabel: { fontSize: 10, color: colors.textSecondary, fontWeight: '700', textAlign: 'center' },
+  emptyCard: { backgroundColor: colors.lavender, borderRadius: 16, padding: 16, alignItems: 'center' },
+  emptyTxt: { fontSize: 12, color: colors.purple, fontWeight: '600', textAlign: 'center' },
+  historyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
+  historyRowLast: { borderBottomWidth: 0 },
+  historyDates: { fontSize: 13, fontWeight: '800', color: colors.textPrimary },
+  historyEstimated: { fontSize: 10, fontWeight: '600', color: colors.textSecondary, fontStyle: 'italic' },
+  historySub: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
+  historyIconBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: colors.lavender, alignItems: 'center', justifyContent: 'center' },
+  historyIconTxt: { fontSize: 14 },
 });

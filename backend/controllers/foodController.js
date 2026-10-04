@@ -169,12 +169,10 @@ const searchFoods = (req, res) => {
   if (!q) return res.json({ items: [] });
 
   db.query(
-    `SELECT * FROM foods 
-     WHERE name LIKE ? 
-     OR sinhala_name LIKE ? 
-     OR tamil_name LIKE ?
+    `SELECT * FROM foods
+     WHERE name LIKE ?
      LIMIT 10`,
-    [`%${q}%`, `%${q}%`, `%${q}%`],
+    [`%${q}%`],
     (err, results) => {
       if (err) return res.status(500).json({ message: 'Database error' });
       res.json({ items: results });
@@ -200,6 +198,7 @@ const getTodayLog = (req, res) => {
         const mealKey = item.meal_type?.charAt(0).toUpperCase() +
                         item.meal_type?.slice(1) || 'Breakfast';
         if (meals[mealKey]) meals[mealKey].push({
+          id: item.id,
           name: item.food_name,
           calories: item.calories || 0,
           protein: item.protein || 0,

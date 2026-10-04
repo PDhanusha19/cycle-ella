@@ -45,8 +45,9 @@ export default function DashboardScreen({ navigation }) {
   const [phase, setPhase] = useState({ phase_name: null, day_of_cycle: 0 });
   const [healthScore, setHealthScore] = useState(0);
   const [calories, setCalories] = useState({ consumed: 0, goal: 1800 });
-  const [nextPeriod, setNextPeriod] = useState(null);
+  const [prediction, setPrediction] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [lastMeasurement, setLastMeasurement] = useState(undefined); // undefined = not loaded yet, null = loaded but none exists
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -66,15 +67,25 @@ export default function DashboardScreen({ navigation }) {
 
     try {
       const foodRes = await api.get('/food/today');
-      setCalories({
-        consumed: foodRes.data?.nutrition?.calories || 0,
-        goal: foodRes.data?.nutrition?.goal || 1800,
-      });
+      setCalories(c => ({ ...c, consumed: foodRes.data?.nutrition?.calories || 0 }));
     } catch (_) {}
 
     try {
+      const nutRes = await api.get('/nutrition/today');
+      const target = nutRes.data?.targets?.daily_calories;
+      if (target) setCalories(c => ({ ...c, goal: target }));
+    } catch (_) {}
+
+    try {
+      const measRes = await api.get('/profile/measurements/latest');
+      setLastMeasurement(measRes.data?.recorded_at ? measRes.data : null);
+    } catch (_) {
+      setLastMeasurement(null);
+    }
+
+    try {
       const predRes = await api.get('/period/predictions');
-      setNextPeriod(predRes.data?.nextPeriod || null);
+      setPrediction(predRes.data || null);
     } catch (_) {}
 
     try {
@@ -94,6 +105,11 @@ export default function DashboardScreen({ navigation }) {
   };
 
   const calPct = calories.goal > 0 ? Math.min((calories.consumed / calories.goal) * 100, 100) : 0;
+  const daysSinceMeasurement = lastMeasurement?.recorded_at
+    ? Math.floor((new Date() - new Date(lastMeasurement.recorded_at)) / (1000 * 60 * 60 * 24))
+    : null;
+  // Missing measurement is treated as "definitely remind," not a silently-false comparison.
+  const showWeighInReminder = lastMeasurement !== undefined && (lastMeasurement === null || daysSinceMeasurement >= 7);
   const phaseColor = PHASE_COLORS[phase.phase_name] || colors.green;
   const phaseLabel = phase.phase_name ? `${phase.phase_name} Phase` : 'Start tracking';
 
@@ -107,6 +123,17 @@ export default function DashboardScreen({ navigation }) {
   const todayTip = phase.phase_name
     ? phaseTips[phase.phase_name]
     : "Log your period and meals to start getting personalized cycle-based tips 🌸";
+
+  // computePrediction() returns a short date ("Oct 8", "Oct 5–11") only for
+  // the 'point' and 'range' types. The other types ('wide_range',
+  // 'population_estimate', 'no_data') return a full sentence explaining why
+  // there is no date — that belongs in the subtitle, not the narrow
+  // right-hand slot, where it squeezed the title to one character per line.
+  const hasDatePrediction = prediction?.type === 'point' || prediction?.type === 'range';
+  const periodBadge = hasDatePrediction ? prediction.nextPeriod : '—';
+  const periodSubtitle = hasDatePrediction
+    ? 'Predicted based on your cycle'
+    : prediction?.nextPeriod || 'Predicted based on your cycle';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
@@ -160,11 +187,11 @@ export default function DashboardScreen({ navigation }) {
           <View style={s.divider} />
           <TouchableOpacity style={s.reminderRow} onPress={() => navigation.navigate('PeriodTracker')}>
             <View style={s.reminderIcon}><Text style={{ fontSize: 16 }}>🔴</Text></View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.reminderTitle}>Next Period</Text>
-              <Text style={s.reminderSub}>Predicted based on your cycle</Text>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={s.reminderTitle} numberOfLines={1}>Next Period</Text>
+              <Text style={s.reminderSub}>{periodSubtitle}</Text>
             </View>
-            <Text style={s.reminderTime}>{nextPeriod || '—'}</Text>
+            <Text style={s.reminderTime} numberOfLines={2}>{periodBadge}</Text>
           </TouchableOpacity>
         </View>
 
@@ -178,6 +205,23 @@ export default function DashboardScreen({ navigation }) {
             <LinearGradient colors={['#E5457A', '#9B4DB5']} style={[s.calFill, { width: `${calPct}%` }]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
           </View>
         </TouchableOpacity>
+
+        {showWeighInReminder && (
+          <TouchableOpacity style={s.weighInBanner} onPress={() => navigation.navigate('BMI', { checkInMode: true })} activeOpacity={0.85}>
+            <Text style={{ fontSize: 20 }}>⚖️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={s.weighInTitle}>
+                {lastMeasurement === null ? 'Set up your nutrition targets' : 'Time for your weekly weigh-in'}
+              </Text>
+              <Text style={s.weighInSub}>
+                {lastMeasurement === null
+                  ? 'Log your weight to get personalized calorie & macro targets'
+                  : `It's been ${daysSinceMeasurement} days since your last check-in`}
+              </Text>
+            </View>
+            <Text style={s.reminderTime}>→</Text>
+          </TouchableOpacity>
+        )}
 
         <View style={s.moreRow}>
           <TouchableOpacity style={s.moreBtn} onPress={() => navigation.navigate('Progress')}>
@@ -228,12 +272,18 @@ const s = StyleSheet.create({
   reminderIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: colors.lavender, alignItems: 'center', justifyContent: 'center' },
   reminderTitle: { fontSize: 13, fontWeight: '700', color: colors.textPrimary },
   reminderSub: { fontSize: 11, color: colors.textSecondary },
-  reminderTime: { fontSize: 11, fontWeight: '700', color: colors.purple },
+  // flexShrink defaults to 0 in React Native (not 1 as on the web), so
+  // without these a long value here refuses to shrink and collapses the
+  // flex:1 title column next to it. maxWidth keeps the row balanced.
+  reminderTime: { fontSize: 11, fontWeight: '700', color: colors.purple, flexShrink: 1, maxWidth: '40%', textAlign: 'right' },
   calRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   calNum: { fontSize: 13, fontWeight: '900', color: colors.textPrimary },
   calPct: { fontSize: 11, color: colors.textSecondary },
   calBar: { height: 8, backgroundColor: colors.border, borderRadius: 99, overflow: 'hidden' },
   calFill: { height: '100%', borderRadius: 99 },
+  weighInBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: colors.amberBg, borderRadius: 20, padding: 16 },
+  weighInTitle: { fontSize: 13, fontWeight: '800', color: colors.textPrimary },
+  weighInSub: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
   moreRow: { flexDirection: 'row', gap: 8 },
   moreBtn: { flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 14, paddingVertical: 10, alignItems: 'center' },
   moreTxt: { fontSize: 10, fontWeight: '700', color: colors.textPrimary },

@@ -1,9 +1,28 @@
+const dotenv = require('dotenv');
+
+// Must run before anything that reads process.env at require time —
+// config/db.js builds its pool from these variables the moment it is
+// required, so loading .env after that require left it with undefined
+// credentials.
+dotenv.config();
+
+// Fail fast and loudly rather than starting a server that cannot talk to
+// the database, or one that signs tokens with an undefined secret.
+const REQUIRED_ENV = ['JWT_SECRET', 'DB_HOST', 'DB_USER', 'DB_NAME'];
+const missingEnv = REQUIRED_ENV.filter((name) => !process.env[name]);
+if (missingEnv.length > 0) {
+  console.error('');
+  console.error('❌ Cannot start: missing required environment variable(s):');
+  missingEnv.forEach((name) => console.error(`   - ${name}`));
+  console.error('');
+  console.error('Add them to backend/.env — see backend/.env.example for the full list.');
+  console.error('');
+  process.exit(1);
+}
+
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const db = require('./config/db');
-
-dotenv.config();
 
 const app = express();
 
@@ -35,6 +54,8 @@ const faqRoutes = require('./routes/faq');
 app.use('/api/faq', faqRoutes);
 const chatbotRoutes = require('./routes/chatbot');
 app.use('/api/chatbot', chatbotRoutes);
+const nutritionRoutes = require('./routes/nutrition');
+app.use('/api/nutrition', nutritionRoutes);
 
 // Test route
 app.get('/', (req, res) => {

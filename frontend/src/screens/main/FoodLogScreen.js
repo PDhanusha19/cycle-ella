@@ -12,6 +12,14 @@ import * as IntentLauncher from 'expo-intent-launcher';
 const MEAL_TABS = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
 const UNITS = ['g', 'pieces', 'cups', 'tbsp', 'serving'];
 const UNIT_TO_GRAMS = { 'g': 1, 'pieces': 100, 'cups': 200, 'tbsp': 15, 'serving': 150 };
+// Foods in the catalogue don't all store their nutrients on the same basis.
+// 'per_100g' rows are per 100 grams, so quantity has to be converted to
+// grams first. 'per_portion' / 'per_item' rows already hold the values for
+// one serving (one egg, one plate of rice), so quantity is simply how many
+// of those — converting it to grams inflated them (the default 'serving'
+// unit scaled a stored portion by 150/100 = 1.5x).
+const PORTION_BASES = ['per_portion', 'per_item'];
+const isPortionBased = (food) => PORTION_BASES.indexOf(food?.serving_basis) !== -1;
 const BASE = api.defaults.baseURL;
 
 const LANG_OPTIONS = [
@@ -80,9 +88,16 @@ function parseVoiceInput(text) {
 }
 
 function calcMacros(food, quantity, unit) {
-  const base = food.serving_size_g || 100;
-  const grams = parseFloat(quantity || 1) * (UNIT_TO_GRAMS[unit] || 150);
-  const ratio = grams / base;
+  const qty = parseFloat(quantity || 1) || 0;
+  let ratio;
+  if (isPortionBased(food)) {
+    // Stored values already describe one portion — quantity is a count.
+    ratio = qty;
+  } else {
+    const base = food.serving_size_g || 100;
+    const grams = qty * (UNIT_TO_GRAMS[unit] || 150);
+    ratio = grams / base;
+  }
   return {
     calories: Math.round((food.calories || 0) * ratio),
     protein: Math.round((food.protein || 0) * ratio * 10) / 10,
@@ -186,7 +201,14 @@ export default function FoodLogScreen({ navigation }) {
   const [search, setSearch] = useState('');
   const [foodItems, setFoodItems] = useState({});
   const [searchResults, setSearchResults] = useState([]);
-  const [nutrition, setNutrition] = useState({ calories: 0, goal: 1800, protein: 0, carbs: 0, fats: 0 });
+  const [nutritionData, setNutritionData] = useState({
+    needsMeasurements: false,
+    targets: null,
+    consumed: { calories: 0, protein: 0, carbs: 0, fats: 0 },
+    remaining: null,
+    percent_consumed: null,
+    disclaimer: '',
+  });
   const [saving, setSaving] = useState(false);
   const [selectedFood, setSelectedFood] = useState(null);
   const [prefillQty, setPrefillQty] = useState(null);
@@ -204,7 +226,7 @@ export default function FoodLogScreen({ navigation }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-  useEffect(() => { loadToday(); loadPopularFoods(); }, []);
+  useEffect(() => { loadToday(); loadPopularFoods(); loadNutrition(); }, []);
 
   useEffect(() => {
     if (isListening) {
@@ -219,8 +241,44 @@ export default function FoodLogScreen({ navigation }) {
     try {
       const res = await api.get('/food/today');
       if (res.data?.meals) setFoodItems(res.data.meals);
-      if (res.data?.nutrition) setNutrition(prev => ({ ...prev, ...res.data.nutrition }));
     } catch (_) {}
+  };
+
+  const loadNutrition = async () => {
+    try {
+      const res = await api.get('/nutrition/today');
+      setNutritionData(res.data);
+    } catch (_) {}
+  };
+
+  // direction: +1 when adding a food item, -1 when deleting one
+  const updateNutritionOptimistic = (macros, direction) => {
+    setNutritionData(nd => {
+      const prevConsumed = nd.consumed || { calories: 0, protein: 0, carbs: 0, fats: 0 };
+      const consumed = {
+        calories: Math.max(0, Math.round(prevConsumed.calories + direction * macros.calories)),
+        protein: Math.max(0, Math.round((prevConsumed.protein + direction * macros.protein) * 10) / 10),
+        carbs: Math.max(0, Math.round((prevConsumed.carbs + direction * macros.carbs) * 10) / 10),
+        fats: Math.max(0, Math.round((prevConsumed.fats + direction * macros.fats) * 10) / 10),
+      };
+
+      if (nd.needsMeasurements || !nd.targets) {
+        return { ...nd, consumed };
+      }
+
+      const t = nd.targets;
+      const remaining = {
+        calories: t.daily_calories - consumed.calories,
+        protein: Math.round((t.daily_protein_g - consumed.protein) * 10) / 10,
+        carbs: Math.round((t.daily_carbs_g - consumed.carbs) * 10) / 10,
+        fats: Math.round((t.daily_fats_g - consumed.fats) * 10) / 10,
+      };
+      const percent_consumed = t.daily_calories > 0
+        ? Math.round((consumed.calories / t.daily_calories) * 100)
+        : null;
+
+      return { ...nd, consumed, remaining, percent_consumed };
+    });
   };
 
   const loadPopularFoods = async () => {
@@ -290,27 +348,53 @@ export default function FoodLogScreen({ navigation }) {
   const onConfirmAdd = async (food, quantity, unit, macros) => {
     setShowModal(false); setSelectedFood(null);
     setPrefillQty(null); setPrefillUnit(null);
+
+    // Optimistic add with a temp key — patched with the real DB id once
+    // the request resolves, so a delete button works even on an item
+    // added moments ago.
+    const tempKey = `tmp_${Date.now()}`;
+    const newItem = {
+      ...food, id: null, tempKey,
+      calories: macros.calories, protein: macros.protein,
+      carbs: macros.carbs, fats: macros.fats,
+      quantity: parseFloat(quantity), unit,
+    };
+
     setFoodItems(prev => ({
       ...prev,
-      [activeTab]: [...(prev[activeTab] || []),
-        { ...food, calories: macros.calories, protein: macros.protein,
-          carbs: macros.carbs, fats: macros.fats, quantity: parseFloat(quantity), unit }]
+      [activeTab]: [...(prev[activeTab] || []), newItem]
     }));
-    setNutrition(n => ({
-      ...n,
-      calories: (n.calories || 0) + macros.calories,
-      protein: Math.round(((n.protein || 0) + macros.protein) * 10) / 10,
-      carbs: Math.round(((n.carbs || 0) + macros.carbs) * 10) / 10,
-      fats: Math.round(((n.fats || 0) + macros.fats) * 10) / 10,
-    }));
+    updateNutritionOptimistic(macros, 1);
+
     try {
-      await api.post('/food/log', {
+      const res = await api.post('/food/log', {
         meal_type: activeTab, food_name: food.name,
         calories: macros.calories, protein: macros.protein,
         carbs: macros.carbs, fats: macros.fats,
         quantity: parseFloat(quantity), unit,
       });
+      const newId = res.data?.id;
+      if (newId) {
+        setFoodItems(prev => ({
+          ...prev,
+          [activeTab]: (prev[activeTab] || []).map(it => it.tempKey === tempKey ? { ...it, id: newId } : it)
+        }));
+      }
     } catch (_) {}
+  };
+
+  const onDeleteItem = async (item, mealTab) => {
+    setFoodItems(prev => ({
+      ...prev,
+      [mealTab]: (prev[mealTab] || []).filter(it => it !== item)
+    }));
+    updateNutritionOptimistic(
+      { calories: item.calories, protein: item.protein, carbs: item.carbs, fats: item.fats },
+      -1
+    );
+    if (item.id) {
+      try { await api.delete(`/food/log/${item.id}`); } catch (_) {}
+    }
   };
 
   const loadAiSuggestions = async () => {
@@ -329,7 +413,18 @@ export default function FoodLogScreen({ navigation }) {
 
   const handleSave = () => Alert.alert('Saved! 🌸', 'Your food log has been saved successfully.');
   const currentMealItems = foodItems[activeTab] || [];
-  const calPct = nutrition.goal > 0 ? Math.min((nutrition.calories / nutrition.goal) * 100, 100) : 0;
+
+  const { needsMeasurements, targets, remaining } = nutritionData;
+  const consumed = nutritionData.consumed || { calories: 0, protein: 0, carbs: 0, fats: 0 };
+  const isOverCalories = !!remaining && remaining.calories < 0;
+  const calFillPct = targets?.daily_calories > 0
+    ? Math.min(Math.max((consumed.calories / targets.daily_calories) * 100, 0), 100)
+    : 0;
+  const MACRO_ROWS = targets ? [
+    { label: 'Protein', consumed: consumed.protein, target: targets.daily_protein_g, remaining: remaining?.protein },
+    { label: 'Carbs', consumed: consumed.carbs, target: targets.daily_carbs_g, remaining: remaining?.carbs },
+    { label: 'Fats', consumed: consumed.fats, target: targets.daily_fats_g, remaining: remaining?.fats },
+  ] : [];
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
@@ -412,31 +507,67 @@ export default function FoodLogScreen({ navigation }) {
               <Text style={s.emptySub}>Speak or type to add food</Text>
             </View>
           ) : currentMealItems.map((item, idx) => (
-            <View key={idx} style={[s.foodItem, idx === currentMealItems.length - 1 && { borderBottomWidth: 0 }]}>
+            <View key={item.id ?? item.tempKey ?? idx} style={[s.foodItem, idx === currentMealItems.length - 1 && { borderBottomWidth: 0 }]}>
               <Text style={s.foodEmoji}>🍽️</Text>
               <View style={{ flex: 1 }}>
                 <Text style={s.foodName}>{item.name}</Text>
                 <Text style={s.foodQty}>{item.quantity}{item.unit === 'g' ? 'g' : ` ${item.unit}`}</Text>
               </View>
               <Text style={s.foodCal}>{item.calories} kcal</Text>
+              <TouchableOpacity style={s.deleteBtn} onPress={() => onDeleteItem(item, activeTab)}>
+                <Text style={s.deleteBtnTxt}>✕</Text>
+              </TouchableOpacity>
             </View>
           ))}
         </View>
 
         <Text style={s.sectionTitleLarge}>Daily Summary</Text>
         <View style={[s.card, { gap: 12 }]}>
-          <View style={s.calRow}>
-            <Text style={s.calNum}>{nutrition.calories} kcal</Text>
-            <Text style={s.calGoal}>of {nutrition.goal} goal · {Math.round(calPct)}%</Text>
-          </View>
-          <View style={s.calBar}>
-            <LinearGradient colors={['#E5457A', '#9B4DB5']} style={[s.calFill, { width: `${calPct}%` }]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
-          </View>
-          <View style={s.macroGrid}>
-            <View style={s.macroCell}><Text style={s.macroVal}>{nutrition.protein || 0}g</Text><Text style={s.macroLabel}>Protein</Text></View>
-            <View style={s.macroCell}><Text style={s.macroVal}>{nutrition.carbs || 0}g</Text><Text style={s.macroLabel}>Carbs</Text></View>
-            <View style={[s.macroCell, { borderRightWidth: 0 }]}><Text style={s.macroVal}>{nutrition.fats || 0}g</Text><Text style={s.macroLabel}>Fats</Text></View>
-          </View>
+          {needsMeasurements ? (
+            <>
+              <Text style={s.foodResultMeta}>Complete your BMI step to get a personalized calorie and macro target.</Text>
+              <TouchableOpacity style={s.aiSuggestBtn} onPress={() => navigation.navigate('BMI', { checkInMode: true })} activeOpacity={0.85}>
+                <Text style={s.aiSuggestBtnTxt}>📏 Set Up My Targets</Text>
+              </TouchableOpacity>
+            </>
+          ) : targets ? (
+            <>
+              <View style={s.calRow}>
+                <Text style={s.calNum}>{consumed.calories} kcal</Text>
+                <Text style={[s.calGoal, isOverCalories && { color: colors.pink }]}>
+                  {isOverCalories
+                    ? `${Math.abs(remaining.calories)} kcal over`
+                    : `${remaining.calories} kcal left`} · of {targets.daily_calories}
+                </Text>
+              </View>
+              <View style={s.calBar}>
+                <LinearGradient
+                  colors={isOverCalories ? ['#F5A623', '#E5457A'] : ['#E5457A', '#9B4DB5']}
+                  style={[s.calFill, { width: `${calFillPct}%` }]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} />
+              </View>
+
+              <View style={{ gap: 8, marginTop: 4 }}>
+                {MACRO_ROWS.map(m => {
+                  const over = m.remaining < 0;
+                  const pct = m.target > 0 ? Math.min(Math.max((m.consumed / m.target) * 100, 0), 100) : 0;
+                  return (
+                    <View key={m.label} style={{ gap: 3 }}>
+                      <View style={s.macroBarHeader}>
+                        <Text style={s.macroBarLabel}>{m.label}</Text>
+                        <Text style={[s.macroBarMeta, over && { color: colors.pink }]}>{m.consumed}g / {m.target}g</Text>
+                      </View>
+                      <View style={s.macroBarTrack}>
+                        <View style={[s.macroBarFill, { width: `${pct}%`, backgroundColor: over ? colors.pink : colors.purple }]} />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </>
+          ) : null}
+          <Text style={s.disclaimerTxt}>
+            {nutritionData.disclaimer || 'These are general estimates. Talk to a doctor or dietitian before making big changes to how you eat.'}
+          </Text>
         </View>
 
         <Text style={s.sectionTitleLarge}>AI Suggested For You</Text>
@@ -594,15 +725,19 @@ const s = StyleSheet.create({
   foodName: { fontSize: 13, fontWeight: '700', color: colors.textPrimary },
   foodQty: { fontSize: 11, color: colors.textSecondary },
   foodCal: { fontSize: 12, fontWeight: '800', color: colors.purple },
+  deleteBtn: { padding: 6, marginLeft: 4 },
+  deleteBtnTxt: { fontSize: 13, color: colors.textSecondary, fontWeight: '700' },
   calRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   calNum: { fontSize: 15, fontWeight: '900', color: colors.textPrimary },
   calGoal: { fontSize: 11, color: colors.textSecondary, fontWeight: '700' },
   calBar: { height: 8, backgroundColor: colors.border, borderRadius: 99, overflow: 'hidden' },
   calFill: { height: '100%', borderRadius: 99 },
-  macroGrid: { flexDirection: 'row' },
-  macroCell: { flex: 1, alignItems: 'center', gap: 2, borderRightWidth: 1, borderRightColor: colors.border },
-  macroVal: { fontSize: 17, fontWeight: '900', color: colors.textPrimary },
-  macroLabel: { fontSize: 10, color: colors.textSecondary, fontWeight: '600' },
+  macroBarHeader: { flexDirection: 'row', justifyContent: 'space-between' },
+  macroBarLabel: { fontSize: 11, fontWeight: '700', color: colors.textPrimary },
+  macroBarMeta: { fontSize: 11, color: colors.textSecondary, fontWeight: '600' },
+  macroBarTrack: { height: 5, backgroundColor: colors.border, borderRadius: 99, overflow: 'hidden' },
+  macroBarFill: { height: '100%', borderRadius: 99 },
+  disclaimerTxt: { fontSize: 10, color: colors.textSecondary, fontStyle: 'italic', marginTop: 4 },
   saveBtn: { borderRadius: 16, overflow: 'hidden', elevation: 8 },
   saveBtnGrad: { paddingVertical: 16, alignItems: 'center', borderRadius: 16 },
   saveBtnTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },

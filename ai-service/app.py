@@ -2,8 +2,8 @@
 # CYCLE ELLA — PYTHON AI SERVICE v5.0 (clean)
 # Model 1: PCOS Detector + Risk Level
 #   - Symptom-only questions, no lab test needed
-#   - Trained on 541 real patients (Kerala, India)
-#   - ~78% accuracy, catches ~83% of real PCOS cases
+#   - Trained on 539 real patients (Kerala, India)
+#   - 80.6% accuracy, catches ~83% of real PCOS cases
 # Port: 5001
 # ============================================
 
@@ -135,10 +135,6 @@ def predict_pcos():
 
         risk_level = get_risk_level(pcos_probability)
 
-        # Logistic Regression doesn't have feature_importances_ like Random
-        # Forest does — instead it has coefficients (weights). We rank by
-        # the size of the weight, ignoring +/- direction, to find what
-        # mattered most for this prediction.
         coefficients = list(zip(FEATURE_ORDER, pcos_model.coef_[0]))
         coefficients.sort(key=lambda x: -abs(x[1]))
         top_factors = [f[0] for f in coefficients[:3]]

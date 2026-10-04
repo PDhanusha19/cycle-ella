@@ -1,278 +1,347 @@
 const db = require('../config/db');
+const C = require('../utils/cycleCalculations');
 
 // ── Helpers ───────────────────────────────────────────
-function getPhaseFromDay(dayOfCycle) {
-  if (dayOfCycle <= 5) return 'Menstrual';
-  if (dayOfCycle <= 13) return 'Follicular';
-  if (dayOfCycle <= 16) return 'Ovulatory';
-  return 'Luteal';
-}
 
-function getNutritionTip(phase) {
-  const tips = {
-    'Menstrual': 'Focus on iron-rich foods like spinach, lentils, and dates to replenish blood loss.',
-    'Follicular': 'Eat protein-rich foods like eggs, legumes, and nuts to support follicle growth.',
-    'Ovulatory': 'Include antioxidant-rich foods like berries, leafy greens, and avocado.',
-    'Luteal': 'Reduce sugar and caffeine. Eat magnesium-rich foods like dark chocolate and nuts.'
-  };
-  return tips[phase] || 'Maintain a balanced diet with whole foods.';
-}
-
-// Computes Regular/Irregular status from a list of period start dates.
-// Shared by getRegularity (ongoing tracking) and savePeriodHistory
-// (onboarding, when the user gave exact dates) so both use the exact
-// same clinical rule instead of two different implementations drifting apart.
-function computeRegularity(startDates) {
-  const sorted = [...startDates].sort((a, b) => new Date(a) - new Date(b));
-
-  if (sorted.length < 2) {
-    return {
-      status: 'Not enough data',
-      message: 'Log at least 2 periods to detect your cycle pattern',
-      cycleLengths: [],
-      avgCycle: null,
-      variance: null
-    };
-  }
-
-  // Calculate gap (in days) between each consecutive period start
-  const cycleLengths = [];
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = new Date(sorted[i - 1]);
-    const curr = new Date(sorted[i]);
-    const gap = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
-    if (gap > 0 && gap < 90) cycleLengths.push(gap); // ignore bad data
-  }
-
-  if (cycleLengths.length === 0) {
-    return {
-      status: 'Not enough data',
-      message: 'Log at least 2 valid periods to detect your cycle pattern',
-      cycleLengths: [],
-      avgCycle: null,
-      variance: null
-    };
-  }
-
-  const avgCycle = Math.round(cycleLengths.reduce((a, b) => a + b, 0) / cycleLengths.length);
-
-  // Variance = max deviation between any two cycle lengths
-  const maxLen = Math.max(...cycleLengths);
-  const minLen = Math.min(...cycleLengths);
-  const variance = maxLen - minLen;
-
-  // Clinical guideline: a "normal" cycle is 21-35 days.
-  // If avg is outside that range OR variance between cycles > 9 days → Irregular
-  const outOfNormalRange = avgCycle < 21 || avgCycle > 35;
-  const highVariance = variance > 9;
-  const isIrregular = outOfNormalRange || highVariance;
-
-  let message;
-  if (isIrregular && outOfNormalRange) {
-    message = `Your average cycle (${avgCycle} days) is outside the typical 21-35 day range. This pattern is often seen in PCOS — consider discussing with a gynecologist.`;
-  } else if (isIrregular && highVariance) {
-    message = `Your cycle length varies by ${variance} days between periods. Irregular cycles are a common PCOS symptom — worth tracking and discussing with a doctor.`;
-  } else {
-    message = `Your cycles are fairly consistent (${avgCycle} days on average, varying by ${variance} days). Keep tracking to monitor any changes.`;
-  }
-
-  return {
-    status: isIrregular ? 'Irregular' : 'Regular',
-    message,
-    cycleLengths,
-    avgCycle,
-    variance
-  };
+// All reads/writes go through this — deleted_at IS NULL is the one thing
+// every query in this file must never forget.
+function fetchActiveEntries(user_id, callback) {
+  db.query(
+    'SELECT * FROM period_logs WHERE user_id = ? AND deleted_at IS NULL AND start_date IS NOT NULL ORDER BY start_date ASC',
+    [user_id],
+    callback
+  );
 }
 
 function getOverlapDays(startDateStr, duration, year, month) {
   const days = [];
-  const start = new Date(startDateStr);
   for (let i = 0; i < (duration || 5); i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    if (d.getFullYear() === year && d.getMonth() + 1 === month) {
-      days.push(d.getDate());
+    const d = C.addDays(startDateStr, i);
+    if (d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month) {
+      days.push(d.getUTCDate());
     }
   }
   return days;
 }
 
-// ── SAVE PERIOD HISTORY (onboarding) ─────────────────
-// `periods[i].day` (1-31) is optional — the exact day the user
-// remembers that period starting. When given, we can compute real
-// regularity right away; when omitted, that entry is stored as an
-// estimate (first-of-month) and excluded from the regularity math
-// (see computeRegularity / getRegularity) rather than faking precision.
+const todayISO = () => new Date().toISOString().split('T')[0];
+
+function computeDuration(start, end) {
+  return Math.max(1, C.daysBetween(start, end) + 1);
+}
+
+// Finds a period_logs row (excluding excludeId, if given) whose
+// [start_date, end_date || start_date] range overlaps [candStart, candEnd].
+// An open entry (end_date IS NULL) is treated as ongoing indefinitely.
+function findOverlap(user_id, candStart, candEnd, excludeId, callback) {
+  const params = [user_id, candEnd, candStart];
+  let sql = `SELECT id, start_date, end_date FROM period_logs
+             WHERE user_id = ? AND deleted_at IS NULL
+               AND start_date <= ?
+               AND (end_date IS NULL OR end_date >= ?)`;
+  if (excludeId) {
+    sql += ' AND id != ?';
+    params.push(excludeId);
+  }
+  sql += ' LIMIT 1';
+  db.query(sql, params, (err, results) => {
+    if (err) return callback(err);
+    callback(null, results[0] || null);
+  });
+}
+
+function conflictPayload(conflict) {
+  return {
+    message: `This overlaps your period logged ${C.fmtShort(conflict.start_date)}${conflict.end_date ? `–${C.fmtShort(conflict.end_date)}` : ' (ongoing)'}.`,
+    conflict: { id: conflict.id, start_date: C.isoDate(conflict.start_date), end_date: conflict.end_date ? C.isoDate(conflict.end_date) : null },
+    canExtend: true,
+  };
+}
+
+// ── SAVE PERIOD HISTORY (onboarding backdating) ───────
+// Real dates now, not month/year guesses. Atomic: rejects the whole
+// batch on any future date or internal overlap rather than partially
+// saving. Refuses to wipe real tracked data if the user already has any
+// (today's version unconditionally deletes everything on every submit).
 const savePeriodHistory = (req, res) => {
   const user_id = req.user.id;
-  const { periods, avg_cycle_length } = req.body || {};
+  const { periods } = req.body || {};
 
-  if (!periods || periods.length === 0) {
+  if (!Array.isArray(periods) || periods.length === 0) {
     return res.status(400).json({ message: 'No period data provided' });
   }
 
-  const prepared = periods.map((period) => {
-    const day = Number.isInteger(period.day) && period.day >= 1 && period.day <= 31 ? period.day : null;
-    const isEstimated = day === null;
-    const startDate = `${period.year}-${String(period.month).padStart(2, '0')}-${String(day || 1).padStart(2, '0')}`;
-    return { ...period, startDate, isEstimated };
+  const today = todayISO();
+  const invalidEntries = [];
+  periods.forEach((p, index) => {
+    if (!p.start_date) invalidEntries.push({ index, reason: 'Missing start date' });
+    else if (p.start_date > today) invalidEntries.push({ index, reason: 'Start date is in the future' });
   });
+  // Internal overlap check within the submitted batch itself
+  const sorted = [...periods].map((p, index) => ({ ...p, index })).sort((a, b) => (a.start_date || '').localeCompare(b.start_date || ''));
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const cur = sorted[i];
+    if (!prev.start_date || !cur.start_date) continue;
+    const prevEnd = prev.end_date || (prev.duration_days ? C.isoDate(C.addDays(prev.start_date, prev.duration_days - 1)) : prev.start_date);
+    if (cur.start_date <= prevEnd) {
+      invalidEntries.push({ index: cur.index, reason: 'Overlaps another period in this batch' });
+    }
+  }
 
-  const preciseDates = prepared.filter(p => !p.isEstimated).map(p => p.startDate);
-  const regularity = computeRegularity(preciseDates);
-  const resolvedAvgCycle = regularity.avgCycle || avg_cycle_length || 28;
+  if (invalidEntries.length > 0) {
+    return res.status(400).json({ message: "Some periods couldn't be saved", invalidEntries });
+  }
 
-  db.query('DELETE FROM period_logs WHERE user_id = ?', [user_id], (err) => {
-    if (err) return res.status(500).json({ message: 'Database error' });
+  db.query(
+    'SELECT COUNT(*) as cnt FROM period_logs WHERE user_id = ? AND deleted_at IS NULL AND (is_estimated = FALSE OR is_estimated IS NULL)',
+    [user_id],
+    (err, countRows) => {
+      if (err) return res.status(500).json({ message: 'Database error', error: err.message });
 
-    let inserted = 0;
-    prepared.forEach((period) => {
+      if (countRows[0].cnt > 0) {
+        return res.status(400).json({
+          message: 'You already have tracked periods logged — edit them from the Period Tracker instead of re-submitting your history.',
+        });
+      }
+
       db.query(
-        'INSERT INTO period_logs (user_id, month, year, duration_days, avg_cycle_length, start_date, is_estimated) VALUES (?,?,?,?,?,?,?)',
-        [user_id, period.month, period.year, period.duration_days, resolvedAvgCycle, period.startDate, period.isEstimated],
-        (err) => {
-          if (err) return res.status(500).json({ message: 'Error saving period' });
-          inserted++;
+        'UPDATE period_logs SET deleted_at = NOW() WHERE user_id = ? AND deleted_at IS NULL',
+        [user_id],
+        (err2) => {
+          if (err2) return res.status(500).json({ message: 'Database error', error: err2.message });
 
-          if (inserted === prepared.length) {
-            res.status(201).json({
-              message: 'Period history saved! 🌸',
-              next_period: predictNextPeriod(periods, resolvedAvgCycle),
-              regularity_status: regularity
-            });
-          }
+          let inserted = 0;
+          const insertedEntries = [];
+          periods.forEach((p) => {
+            const d = C.toDate(p.start_date);
+            const month = d.getUTCMonth() + 1;
+            const year = d.getUTCFullYear();
+            const duration = p.duration_days || 5;
+            const end_date = C.isoDate(C.addDays(p.start_date, duration - 1));
+
+            db.query(
+              `INSERT INTO period_logs (user_id, month, year, start_date, end_date, duration_days, is_estimated)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [user_id, month, year, p.start_date, end_date, duration, !!p.is_estimated],
+              (err3, result) => {
+                if (err3) return res.status(500).json({ message: 'Error saving period', error: err3.message });
+                insertedEntries.push({ id: result.insertId, start_date: p.start_date, end_date, duration_days: duration });
+                inserted++;
+
+                if (inserted === periods.length) {
+                  fetchActiveEntries(user_id, (err4, entries) => {
+                    if (err4) return res.status(500).json({ message: 'Database error' });
+                    const stats = C.computeCycleStats(entries);
+                    res.status(201).json({
+                      message: 'Period history saved! 🌸',
+                      entries: insertedEntries,
+                      regularity_status: C.regularityStatus(stats),
+                    });
+                  });
+                }
+              }
+            );
+          });
+        }
+      );
+    }
+  );
+};
+
+// ── LOG PERIOD START (calendar tap or one-tap button) ──
+const logPeriodStart = (req, res) => {
+  const user_id = req.user.id;
+  const { start_date, end_date, duration_days } = req.body || {};
+  const dateToUse = start_date || todayISO();
+
+  if (dateToUse > todayISO()) {
+    return res.status(400).json({ message: 'Cannot log a period start in the future.' });
+  }
+
+  let finalEndDate = end_date || null;
+  let finalDuration = duration_days || null;
+  if (finalEndDate && !finalDuration) finalDuration = computeDuration(dateToUse, finalEndDate);
+  if (finalEndDate && finalEndDate < dateToUse) {
+    return res.status(400).json({ message: 'End date cannot be before the start date.' });
+  }
+  if (finalEndDate && finalEndDate > todayISO()) {
+    return res.status(400).json({ message: 'End date cannot be in the future.' });
+  }
+
+  findOverlap(user_id, dateToUse, finalEndDate || dateToUse, null, (err, conflict) => {
+    if (err) return res.status(500).json({ message: 'Database error', error: err.message });
+    if (conflict) return res.status(409).json(conflictPayload(conflict));
+
+    const d = C.toDate(dateToUse);
+    const month = d.getUTCMonth() + 1;
+    const year = d.getUTCFullYear();
+
+    db.query(
+      `INSERT INTO period_logs (user_id, month, year, start_date, end_date, duration_days)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [user_id, month, year, dateToUse, finalEndDate, finalDuration],
+      (err2, result) => {
+        if (err2) return res.status(500).json({ message: 'Error logging period', error: err2.message });
+        res.status(201).json({
+          message: 'Period logged! 🌸',
+          entry: { id: result.insertId, start_date: dateToUse, end_date: finalEndDate, duration_days: finalDuration },
+        });
+      }
+    );
+  });
+};
+
+// ── LOG PERIOD END (closes the open entry, computes bleed duration) ──
+const logPeriodEnd = (req, res) => {
+  const user_id = req.user.id;
+  const { id, end_date } = req.body || {};
+  const dateToUse = end_date || todayISO();
+
+  const loadOpenEntry = (cb) => {
+    if (id) {
+      db.query('SELECT * FROM period_logs WHERE id = ? AND user_id = ? AND deleted_at IS NULL', [id, user_id], (err, rows) => cb(err, rows?.[0]));
+    } else {
+      db.query(
+        'SELECT * FROM period_logs WHERE user_id = ? AND deleted_at IS NULL AND end_date IS NULL ORDER BY start_date DESC LIMIT 1',
+        [user_id],
+        (err, rows) => cb(err, rows?.[0])
+      );
+    }
+  };
+
+  loadOpenEntry((err, entry) => {
+    if (err) return res.status(500).json({ message: 'Database error', error: err.message });
+    if (!entry) return res.status(400).json({ message: 'No open period to end. Please start a period first.' });
+
+    const startISO = C.isoDate(entry.start_date);
+    if (dateToUse < startISO) return res.status(400).json({ message: 'End date cannot be before the start date.' });
+    if (dateToUse > todayISO()) return res.status(400).json({ message: 'End date cannot be in the future.' });
+
+    const duration = computeDuration(startISO, dateToUse);
+
+    db.query(
+      'UPDATE period_logs SET end_date = ?, duration_days = ? WHERE id = ? AND user_id = ?',
+      [dateToUse, duration, entry.id, user_id],
+      (err2) => {
+        if (err2) return res.status(500).json({ message: 'Error updating period', error: err2.message });
+        res.json({
+          message: 'Period end logged! 🌸',
+          entry: { id: entry.id, start_date: startISO, end_date: dateToUse, duration_days: duration },
+        });
+      }
+    );
+  });
+};
+
+// ── EDIT ENTRY — change start and/or end date ─────────
+const editEntry = (req, res) => {
+  const user_id = req.user.id;
+  const { id } = req.params;
+  const { start_date, end_date } = req.body || {};
+
+  db.query('SELECT * FROM period_logs WHERE id = ? AND user_id = ? AND deleted_at IS NULL', [id, user_id], (err, rows) => {
+    if (err) return res.status(500).json({ message: 'Database error', error: err.message });
+    if (!rows[0]) return res.status(404).json({ message: 'Period entry not found' });
+
+    const entry = rows[0];
+    const newStart = start_date || C.isoDate(entry.start_date);
+    const newEnd = end_date !== undefined ? end_date : (entry.end_date ? C.isoDate(entry.end_date) : null);
+
+    if (newStart > todayISO()) return res.status(400).json({ message: 'Start date cannot be in the future.' });
+    if (newEnd) {
+      if (newEnd < newStart) return res.status(400).json({ message: 'End date cannot be before the start date.' });
+      if (newEnd > todayISO()) return res.status(400).json({ message: 'End date cannot be in the future.' });
+    }
+
+    findOverlap(user_id, newStart, newEnd || newStart, entry.id, (err2, conflict) => {
+      if (err2) return res.status(500).json({ message: 'Database error', error: err2.message });
+      if (conflict) return res.status(409).json(conflictPayload(conflict));
+
+      const duration = newEnd ? computeDuration(newStart, newEnd) : null;
+      const d = C.toDate(newStart);
+
+      db.query(
+        'UPDATE period_logs SET start_date=?, end_date=?, duration_days=?, month=?, year=? WHERE id=? AND user_id=?',
+        [newStart, newEnd, duration, d.getUTCMonth() + 1, d.getUTCFullYear(), entry.id, user_id],
+        (err3) => {
+          if (err3) return res.status(500).json({ message: 'Error updating period', error: err3.message });
+          res.json({
+            message: 'Period updated! 🌸',
+            entry: { id: entry.id, start_date: newStart, end_date: newEnd, duration_days: duration, is_estimated: !!entry.is_estimated },
+          });
         }
       );
     });
   });
 };
 
-function predictNextPeriod(periods, avgCycleLength) {
-  const sorted = [...periods].sort((a, b) => {
-    if (a.year !== b.year) return b.year - a.year;
-    return b.month - a.month;
+// ── DELETE ENTRY — soft delete, names the dates ───────
+const deleteEntry = (req, res) => {
+  const user_id = req.user.id;
+  const { id } = req.params;
+
+  db.query('SELECT * FROM period_logs WHERE id = ? AND user_id = ? AND deleted_at IS NULL', [id, user_id], (err, rows) => {
+    if (err) return res.status(500).json({ message: 'Database error', error: err.message });
+    if (!rows[0]) return res.status(404).json({ message: 'Period entry not found' });
+
+    const entry = rows[0];
+    db.query('UPDATE period_logs SET deleted_at = NOW() WHERE id = ? AND user_id = ?', [entry.id, user_id], (err2) => {
+      if (err2) return res.status(500).json({ message: 'Error deleting period', error: err2.message });
+      const startLabel = C.fmtShort(entry.start_date);
+      const endLabel = entry.end_date ? C.fmtShort(entry.end_date) : null;
+      res.json({
+        message: `Deleted the period logged ${startLabel}${endLabel ? `–${endLabel}` : ''}`,
+        deleted: { id: entry.id, start_date: C.isoDate(entry.start_date), end_date: entry.end_date ? C.isoDate(entry.end_date) : null },
+      });
+    });
   });
-  const latest = sorted[0];
-  const latestDate = new Date(latest.year, latest.month - 1, 1);
-  latestDate.setDate(latestDate.getDate() + (avgCycleLength || 28));
-  return latestDate.toISOString().split('T')[0];
-}
-
-// ── LOG PERIOD START (also accepts custom date + duration) ──
-const logPeriodStart = (req, res) => {
-  const user_id = req.user.id;
-  const { start_date, duration_days } = req.body || {};
-  const dateToUse = start_date || new Date().toISOString().split('T')[0];
-  const dateObj = new Date(dateToUse);
-  const month = dateObj.getMonth() + 1;
-  const year = dateObj.getFullYear();
-
-  db.query(
-    'SELECT avg_cycle_length FROM period_logs WHERE user_id = ? ORDER BY start_date DESC LIMIT 1',
-    [user_id],
-    (err, prevResults) => {
-      const avgCycle = prevResults?.[0]?.avg_cycle_length || 28;
-
-      db.query(
-        'INSERT INTO period_logs (user_id, month, year, start_date, duration_days, avg_cycle_length, is_regular) VALUES (?,?,?,?,?,?,?)',
-        [user_id, month, year, dateToUse, duration_days || 5, avgCycle, 1],
-        (err, result) => {
-          if (err) return res.status(500).json({ message: 'Error logging period' });
-          res.status(201).json({ message: 'Period logged! 🌸', id: result.insertId });
-        }
-      );
-    }
-  );
 };
 
-// ── LOG PERIOD END (calculates real duration from today) ──
-const logPeriodEnd = (req, res) => {
-  const user_id = req.user.id;
-  const { duration_days, end_date } = req.body || {};
-
-  // If duration_days passed explicitly, use it. Otherwise calculate from start_date to today/end_date.
-  db.query(
-    'SELECT start_date FROM period_logs WHERE user_id = ? ORDER BY id DESC LIMIT 1',
-    [user_id],
-    (err, results) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
-      if (results.length === 0) {
-        return res.status(400).json({ message: 'No period found to end. Please start a period first.' });
-      }
-
-      let finalDuration = duration_days;
-
-      if (!finalDuration && results[0].start_date) {
-        const start = new Date(results[0].start_date);
-        const end = end_date ? new Date(end_date) : new Date();
-        finalDuration = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1);
-      }
-
-      finalDuration = finalDuration || 5;
-
-      db.query(
-        'UPDATE period_logs SET duration_days=? WHERE user_id=? ORDER BY id DESC LIMIT 1',
-        [finalDuration, user_id],
-        (err) => {
-          if (err) return res.status(500).json({ message: 'Error updating period' });
-          res.json({ message: 'Period end logged! 🌸', duration_days: finalDuration });
-        }
-      );
-    }
-  );
-};
-
-// ── GET CURRENT CYCLE PHASE (calculated dynamically) ──
+// ── GET CURRENT CYCLE PHASE ────────────────────────────
 const getCurrentPhase = (req, res) => {
   const user_id = req.user.id;
-
-  db.query(
-    'SELECT * FROM period_logs WHERE user_id = ? AND start_date IS NOT NULL ORDER BY start_date DESC LIMIT 1',
-    [user_id],
-    (err, results) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
-
-      if (results.length === 0) {
-        return res.json({
-          phase_name: 'Unknown',
-          day_of_cycle: 0,
-          message: 'No cycle data found. Please log your period history.'
-        });
-      }
-
-      const latest = results[0];
-      const avgCycle = latest.avg_cycle_length || 28;
-      const startDate = new Date(latest.start_date);
-      const today = new Date();
-
-      const daysSince = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-      let dayOfCycle = (daysSince % avgCycle) + 1;
-      if (dayOfCycle < 1) dayOfCycle = 1;
-
-      const phaseName = getPhaseFromDay(dayOfCycle);
-
-      res.json({
-        phase_name: phaseName,
-        day_of_cycle: dayOfCycle,
-        nutrition_tip: getNutritionTip(phaseName)
-      });
-    }
-  );
+  fetchActiveEntries(user_id, (err, entries) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+    const stats = C.computeCycleStats(entries);
+    const phase = C.computePhase(stats);
+    res.json({
+      phase_name: phase.phaseName,
+      day_of_cycle: phase.dayOfCycle,
+      is_late: phase.isLate,
+      message: phase.message,
+      nutrition_tip: phase.phaseName === 'Unknown' ? null : C.getPhaseTip(phase.phaseName),
+    });
+  });
 };
 
-// ── GET PERIOD HISTORY (raw list) ─────────────────────
+// ── GET PERIOD HISTORY (for the Cycle History list) ───
 const getPeriodHistory = (req, res) => {
   const user_id = req.user.id;
+  fetchActiveEntries(user_id, (err, entries) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
 
-  db.query(
-    'SELECT * FROM period_logs WHERE user_id = ? ORDER BY year DESC, month DESC',
-    [user_id],
-    (err, results) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
-      res.json(results);
-    }
-  );
+    const sorted = [...entries].sort((a, b) => C.toDate(a.start_date) - C.toDate(b.start_date));
+    const withIntervals = sorted.map((e, i) => {
+      const next = sorted[i + 1];
+      let interval = null;
+      if (next) {
+        const gap = C.daysBetween(e.start_date, next.start_date);
+        if (gap > 0 && gap < 90) interval = gap;
+      }
+      return {
+        id: e.id,
+        start_date: C.isoDate(e.start_date),
+        end_date: e.end_date ? C.isoDate(e.end_date) : null,
+        duration_days: e.duration_days,
+        is_open: !e.end_date,
+        is_estimated: !!e.is_estimated,
+        interval_to_next_days: interval,
+      };
+    });
+
+    res.json({ entries: withIntervals.reverse() }); // newest first
+  });
 };
 
 // ── GET CALENDAR DAYS for a specific month/year ───────
@@ -281,95 +350,84 @@ const getPeriodCalendar = (req, res) => {
   const year = parseInt(req.query.year) || new Date().getFullYear();
   const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
 
-  db.query(
-    'SELECT * FROM period_logs WHERE user_id = ? AND start_date IS NOT NULL ORDER BY start_date ASC',
-    [user_id],
-    (err, logs) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
+  fetchActiveEntries(user_id, (err, entries) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
 
-      let periodDays = [];
-      logs.forEach(log => {
-        periodDays.push(...getOverlapDays(log.start_date, log.duration_days, year, month));
-      });
+    let periodDays = [];
+    entries.forEach((e) => {
+      const duration = e.duration_days || C.daysBetween(e.start_date, e.end_date || e.start_date) + 1;
+      periodDays.push(...getOverlapDays(e.start_date, duration, year, month));
+    });
 
-      let predictedDays = [];
-      if (logs.length > 0) {
-        const last = logs[logs.length - 1];
-        const avgCycle = last.avg_cycle_length || 28;
+    const stats = C.computeCycleStats(entries);
+    const prediction = C.computePrediction(stats);
+    let predictedDays = [];
 
-        for (let i = 1; i <= 8; i++) {
-          const nextStart = new Date(last.start_date);
-          nextStart.setDate(nextStart.getDate() + avgCycle * i);
-          const overlap = getOverlapDays(
-            nextStart.toISOString().split('T')[0],
-            last.duration_days || 5,
-            year, month
-          );
-          overlap.forEach(d => {
-            if (!periodDays.includes(d) && !predictedDays.includes(d)) {
-              predictedDays.push(d);
-            }
-          });
-        }
-      }
+    if (stats.latestEntry && stats.hasEnoughForPersonalization) {
+      // Project up to 6 cycles forward using the same avg interval, marking
+      // the full predicted range (not a single day) for each projected cycle
+      // so the calendar's dashed styling honestly reflects uncertainty width.
+      const spanDays = prediction.rangeStart && prediction.rangeEnd
+        ? C.daysBetween(prediction.rangeStart, prediction.rangeEnd) + 1
+        : (stats.avgBleedDurationDays || 5);
 
-      res.json({
-        periodDays: [...new Set(periodDays)],
-        predictedDays: [...new Set(predictedDays)],
-      });
-    }
-  );
-};
-
-// ── GET PREDICTIONS (next period, ovulation, avg cycle) ──
-const getPredictions = (req, res) => {
-  const user_id = req.user.id;
-
-  db.query(
-    'SELECT * FROM period_logs WHERE user_id = ? AND start_date IS NOT NULL ORDER BY start_date DESC LIMIT 1',
-    [user_id],
-    (err, results) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
-
-      if (results.length === 0) {
-        return res.json({
-          nextPeriod: 'No data yet',
-          ovulationWindow: 'No data yet',
-          avgCycle: '28d'
+      for (let i = 1; i <= 6; i++) {
+        const anchor = C.addDays(stats.latestEntry.start_date, stats.avgInterval * i);
+        const rangeStartForCycle = prediction.rangeStart
+          ? C.addDays(prediction.rangeStart, stats.avgInterval * (i - 1))
+          : anchor;
+        const overlap = getOverlapDays(C.isoDate(rangeStartForCycle), spanDays, year, month);
+        overlap.forEach((d) => {
+          if (!periodDays.includes(d) && !predictedDays.includes(d)) predictedDays.push(d);
         });
       }
-
-      const latest = results[0];
-      const avgCycle = latest.avg_cycle_length || 28;
-      const today = new Date();
-
-      let nextPeriod = new Date(latest.start_date);
-      while (nextPeriod <= today) {
-        nextPeriod.setDate(nextPeriod.getDate() + avgCycle);
-      }
-
-      const ovulationStart = new Date(nextPeriod);
-      ovulationStart.setDate(ovulationStart.getDate() - (avgCycle - 14));
-      const ovulationEnd = new Date(ovulationStart);
-      ovulationEnd.setDate(ovulationEnd.getDate() + 2);
-
-      const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-      res.json({
-        nextPeriod: fmt(nextPeriod),
-        nextPeriodDate: nextPeriod.toISOString().split('T')[0],
-        ovulationWindow: `${ovulationStart.getDate()}–${ovulationEnd.getDate()}`,
-        avgCycle: `${avgCycle}d`
-      });
     }
-  );
+
+    res.json({
+      periodDays: [...new Set(periodDays)],
+      predictedDays: [...new Set(predictedDays)],
+    });
+  });
+};
+
+// ── GET PREDICTIONS (next period only — no ovulation) ─
+const getPredictions = (req, res) => {
+  const user_id = req.user.id;
+  fetchActiveEntries(user_id, (err, entries) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+    const stats = C.computeCycleStats(entries);
+    const prediction = C.computePrediction(stats);
+    res.json(prediction);
+  });
+};
+
+// ── GET CYCLE SUMMARY STATS ────────────────────────────
+const getCycleSummary = (req, res) => {
+  const user_id = req.user.id;
+  fetchActiveEntries(user_id, (err, entries) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+    const stats = C.computeCycleStats(entries);
+    const regularity = C.regularityStatus(stats);
+    res.json({
+      avgIntervalDays: stats.avgInterval,
+      varianceDays: stats.varianceDays,
+      cyclesLoggedLast12Months: stats.cyclesLoggedLast12Months,
+      longestGapDays: stats.longestGapDays,
+      shortestGapDays: stats.minInterval,
+      isIrregular: stats.isIrregular,
+      status: regularity.status,
+      avgBleedDurationDays: stats.avgBleedDurationDays,
+      totalPeriodsLogged: stats.totalPeriodsLogged,
+      hasEnoughForPersonalization: stats.hasEnoughForPersonalization,
+    });
+  });
 };
 
 // ── SAVE TODAY'S SYMPTOMS ─────────────────────────────
 const logSymptoms = (req, res) => {
   const user_id = req.user.id;
   const { symptoms, log_date } = req.body || {};
-  const date = log_date || new Date().toISOString().split('T')[0];
+  const date = log_date || todayISO();
   const symptomsStr = Array.isArray(symptoms) ? symptoms.join(',') : (symptoms || '');
 
   db.query(
@@ -386,7 +444,7 @@ const logSymptoms = (req, res) => {
 // ── GET TODAY'S SYMPTOMS ──────────────────────────────
 const getTodaySymptoms = (req, res) => {
   const user_id = req.user.id;
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayISO();
 
   db.query(
     'SELECT symptoms FROM period_symptoms WHERE user_id = ? AND log_date = ?',
@@ -400,35 +458,37 @@ const getTodaySymptoms = (req, res) => {
 };
 
 // ── GET CYCLE REGULARITY (Regular vs Irregular) ───────
-// Only trusts precisely-dated logs (is_estimated = FALSE) — onboarding
-// entries where the user didn't remember the exact day are excluded so
-// a guessed first-of-month date can't masquerade as a tracked gap.
+// computeCycleStats() excludes is_estimated (guessed first-of-month)
+// entries from its gap math internally, so every endpoint that calls it
+// — this one, /period/summary, savePeriodHistory's response — agrees.
 const getRegularity = (req, res) => {
   const user_id = req.user.id;
-
-  db.query(
-    `SELECT start_date FROM period_logs
-     WHERE user_id = ? AND start_date IS NOT NULL AND (is_estimated = FALSE OR is_estimated IS NULL)
-     ORDER BY start_date ASC`,
-    [user_id],
-    (err, logs) => {
-      if (err) return res.status(500).json({ message: 'Database error' });
-
-      const result = computeRegularity(logs.map(l => l.start_date));
-      res.json({ ...result, periodsLogged: logs.length });
-    }
-  );
+  fetchActiveEntries(user_id, (err, entries) => {
+    if (err) return res.status(500).json({ message: 'Database error' });
+    const stats = C.computeCycleStats(entries);
+    const regularity = C.regularityStatus(stats);
+    res.json({
+      ...regularity,
+      cycleLengths: stats.gaps,
+      avgCycle: stats.avgInterval,
+      variance: stats.varianceDays,
+      periodsLogged: entries.length,
+    });
+  });
 };
 
 module.exports = {
   savePeriodHistory,
   logPeriodStart,
   logPeriodEnd,
+  editEntry,
+  deleteEntry,
   getCurrentPhase,
   getPeriodHistory,
   getPeriodCalendar,
   getPredictions,
+  getCycleSummary,
   logSymptoms,
   getTodaySymptoms,
-  getRegularity
+  getRegularity,
 };

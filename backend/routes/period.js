@@ -5,10 +5,13 @@ const {
   savePeriodHistory,
   logPeriodStart,
   logPeriodEnd,
+  editEntry,
+  deleteEntry,
   getCurrentPhase,
   getPeriodHistory,
   getPeriodCalendar,
   getPredictions,
+  getCycleSummary,
   logSymptoms,
   getTodaySymptoms,
   getRegularity
@@ -23,17 +26,27 @@ router.post('/start', protect, logPeriodStart);
 // Log period end
 router.put('/end', protect, logPeriodEnd);
 
+// Edit a logged period entry
+router.put('/entries/:id', protect, editEntry);
+
+// Soft-delete a logged period entry
+router.delete('/entries/:id', protect, deleteEntry);
+
 // Get current cycle phase
 router.get('/phase', protect, getCurrentPhase);
 
-// Get period history (raw list)
+// Get period history (cycle history list)
 router.get('/history', protect, getPeriodHistory);
 
 // Get calendar days for a specific month/year
 router.get('/calendar', protect, getPeriodCalendar);
 
-// Get predictions (next period, ovulation, avg cycle)
+// Get predictions (next period — no ovulation window; unreliable in
+// anovulatory cycles, which PCOS is defined by)
 router.get('/predictions', protect, getPredictions);
+
+// Get cycle summary stats (avg interval, variance, cycles in 12mo, longest gap)
+router.get('/summary', protect, getCycleSummary);
 
 // Save today's symptoms
 router.post('/symptoms', protect, logSymptoms);

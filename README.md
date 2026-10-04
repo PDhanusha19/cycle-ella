@@ -1,2 +1,2 @@
 # cycle-ella
-AI Powered Multilingual PCOS Nutrition Coaching App
+AI Powered PCOS Nutrition Coaching App

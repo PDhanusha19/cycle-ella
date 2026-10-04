@@ -11,8 +11,9 @@ One model gives two answers:
     1. Likely PCOS or not (Yes/No + confidence %)
     2. Risk level: Low / Medium / High
 
-Trained on 541 real patients from 10 hospitals in Kerala, India
-(open clinical dataset, widely used in published PCOS research).
+Trained on 539 real patients from 10 hospitals in Kerala, India
+(open clinical dataset, widely used in published PCOS research;
+541 raw rows, 2 dropped during cleaning — see step 2 below).
 
 Algorithm: Logistic Regression + StandardScaler. This is what
 app.py actually loads at runtime (pcos_model_logistic_regression.pkl

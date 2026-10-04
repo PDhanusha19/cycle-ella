@@ -167,7 +167,10 @@ export default function HealthAssistantScreen({ navigation, route }) {
         text: m.text,
       }));
 
-      const res = await api.post('/chatbot/ask', { message: msg, history });
+      // Gemini can take longer than the app's default 30s request timeout to
+      // respond, especially under load — give this specific call more room
+      // before falling back to the FAQ library.
+      const res = await api.post('/chatbot/ask', { message: msg, history }, { timeout: 45000 });
 
       setMessages(m => [...m, {
         type: 'bot',
@@ -177,17 +180,17 @@ export default function HealthAssistantScreen({ navigation, route }) {
         source: '🤖 AI guide — not a substitute for medical advice.',
       }]);
     } catch (err) {
-      // Fall back to the FAQ library if the AI is unreachable
+      // Fall back to the FAQ library if the AI is unreachable. The backend's
+      // /faq/search already extracts and scores keywords from the whole
+      // query (question-match weighted above tag-match) — splitting into
+      // single words here and trying the longest first only threw that
+      // scoring away and let generic words like "should" win over the
+      // actually meaningful one ("tests"), landing on unrelated answers.
       try {
-        const words = msg.toLowerCase().replace(/[^\w\s]/g, '').split(' ')
-          .filter(w => w.length >= 3).sort((a, b) => b.length - a.length);
-        const terms = words.length > 0 ? words : [msg];
         let botText = '';
+        const r = await api.get(`/faq/search?q=${encodeURIComponent(msg)}`);
+        if (r.data?.length > 0) botText = r.data[0].answer;
 
-        for (const term of terms) {
-          const r = await api.get(`/faq/search?q=${encodeURIComponent(term)}`);
-          if (r.data?.length > 0) { botText = r.data[0].answer; break; }
-        }
         if (!botText) {
           botText = "I'm having trouble connecting right now. For personal advice, please see a gynecologist — check the Find a Doctor tab above. 👩‍⚕️";
         }

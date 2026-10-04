@@ -13,8 +13,19 @@ const BADGE_STYLES = {
   amber: { bg: colors.amberBg, color: '#b8600a' },
 };
 
-function buildReportHTML({ period, stats, topFoods, symptoms, nextWeekTip, userName }) {
+const fmtShort = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
+function buildReportHTML({ period, stats, cycleSummary, topFoods, symptoms, nextWeekTip, userName }) {
   const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const periodsList = (cycleSummary?.periodsInWindow || []);
+  const cyclePeriodsHtml = periodsList.length > 0
+    ? periodsList.map(p => `${fmtShort(p.start_date)}${p.end_date ? `–${fmtShort(p.end_date)}` : ' (ongoing)'} (${p.duration_days || '—'} day${p.duration_days === 1 ? '' : 's'})`).join('<br/>')
+    : `No periods logged this ${period.toLowerCase()}`;
 
   const foodRows = topFoods.length > 0
     ? topFoods.map(f => `
@@ -65,6 +76,28 @@ function buildReportHTML({ period, stats, topFoods, symptoms, nextWeekTip, userN
         </tr>
       </table>
 
+      <h2 style="font-size:13px; text-transform:uppercase; letter-spacing:1px; color:#9B4DB5; margin-bottom:12px;">Cycle Summary</h2>
+      <div style="background:#F7F0FC; border-radius:12px; padding:14px; margin-bottom:12px; font-size:13px; color:#1a1a2e; line-height:20px;">
+        ${cyclePeriodsHtml}
+      </div>
+      <table style="width:100%; border-collapse:collapse; margin-bottom:12px;">
+        <tr>
+          <td style="width:33%; padding:10px; text-align:center;">
+            <div style="font-size:18px; font-weight:900; color:#1a1a2e;">${cycleSummary?.avgIntervalDays != null ? `${cycleSummary.avgIntervalDays}d` : '—'}</div>
+            <div style="font-size:10px; color:#777;">Avg Interval (12mo)</div>
+          </td>
+          <td style="width:33%; padding:10px; text-align:center;">
+            <div style="font-size:18px; font-weight:900; color:#1a1a2e;">${cycleSummary?.varianceDays != null ? `${cycleSummary.varianceDays}d` : '—'}</div>
+            <div style="font-size:10px; color:#777;">Variance (12mo)</div>
+          </td>
+          <td style="width:33%; padding:10px; text-align:center;">
+            <div style="font-size:18px; font-weight:900; color:#1a1a2e;">${cycleSummary?.currentPhase || '—'}</div>
+            <div style="font-size:10px; color:#777;">Current Phase</div>
+          </td>
+        </tr>
+      </table>
+      ${cycleSummary?.regularityMessage ? `<p style="font-size:12px; color:#555; line-height:18px; margin-bottom:24px;"><strong>${cycleSummary.regularityStatus}:</strong> ${cycleSummary.regularityMessage}</p>` : '<div style="margin-bottom:24px;"></div>'}
+
       <h2 style="font-size:13px; text-transform:uppercase; letter-spacing:1px; color:#9B4DB5; margin-bottom:12px;">Most Eaten Foods</h2>
       <table style="width:100%; border-collapse:collapse; margin-bottom:24px; border-top:1px solid #eee;">
         ${foodRows}
@@ -88,6 +121,7 @@ function buildReportHTML({ period, stats, topFoods, symptoms, nextWeekTip, userN
 export default function ReportsScreen({ navigation }) {
   const [period, setPeriod] = useState('Weekly');
   const [stats, setStats] = useState({ daysLogged: '0/7', avgCalories: '0', cycleLength: '—', healthScore: '0' });
+  const [cycleSummary, setCycleSummary] = useState({});
   const [topFoods, setTopFoods] = useState([]);
   const [symptoms, setSymptoms] = useState([]);
   const [nextWeekTip, setNextWeekTip] = useState('Loading your personalized tip...');
@@ -101,6 +135,7 @@ export default function ReportsScreen({ navigation }) {
           : await api.get('/reports/monthly');
         if (res.data) {
           if (res.data.stats) setStats(res.data.stats);
+          if (res.data.cycleSummary) setCycleSummary(res.data.cycleSummary);
           if (res.data.topFoods) setTopFoods(res.data.topFoods);
           if (res.data.symptoms) setSymptoms(res.data.symptoms);
           if (res.data.nextWeekTip) setNextWeekTip(res.data.nextWeekTip);
@@ -113,7 +148,7 @@ export default function ReportsScreen({ navigation }) {
   const generatePDF = async () => {
     setExporting(true);
     try {
-      const html = buildReportHTML({ period, stats, topFoods, symptoms, nextWeekTip });
+      const html = buildReportHTML({ period, stats, cycleSummary, topFoods, symptoms, nextWeekTip });
       const { uri } = await Print.printToFileAsync({ html, base64: false });
       return uri;
     } catch (err) {
@@ -184,6 +219,40 @@ export default function ReportsScreen({ navigation }) {
               <Text style={s.statLabel}>{stat.label}</Text>
             </View>
           ))}
+        </View>
+
+        <View style={[s.card, { gap: 8 }]}>
+          <Text style={s.cardTitle}>Cycle Summary</Text>
+          {cycleSummary.periodsInWindow?.length > 0 ? (
+            period === 'Weekly' ? (
+              <Text style={s.tipTxt}>{cycleSummary.periodsInWindow.length} period{cycleSummary.periodsInWindow.length !== 1 ? 's' : ''} logged this week.</Text>
+            ) : (
+              cycleSummary.periodsInWindow.map((p, i) => (
+                <Text key={i} style={s.tipTxt}>
+                  {fmtShort(p.start_date)}{p.end_date ? `–${fmtShort(p.end_date)}` : ' (ongoing)'} · {p.duration_days || '—'} day{p.duration_days === 1 ? '' : 's'}
+                </Text>
+              ))
+            )
+          ) : (
+            <Text style={s.emptyTxt}>No periods logged this {period.toLowerCase()}</Text>
+          )}
+          <View style={s.cycleStatsRow}>
+            <View style={s.cycleStatCell}>
+              <Text style={s.cycleStatVal}>{cycleSummary.avgIntervalDays != null ? `${cycleSummary.avgIntervalDays}d` : '—'}</Text>
+              <Text style={s.cycleStatLabel}>Avg Interval (12mo)</Text>
+            </View>
+            <View style={s.cycleStatCell}>
+              <Text style={s.cycleStatVal}>{cycleSummary.varianceDays != null ? `${cycleSummary.varianceDays}d` : '—'}</Text>
+              <Text style={s.cycleStatLabel}>Variance (12mo)</Text>
+            </View>
+            <View style={s.cycleStatCell}>
+              <Text style={s.cycleStatVal}>{cycleSummary.currentPhase || '—'}</Text>
+              <Text style={s.cycleStatLabel}>Current Phase</Text>
+            </View>
+          </View>
+          {cycleSummary.regularityMessage && (
+            <Text style={s.regularityNoteTxt}>{cycleSummary.regularityStatus}: {cycleSummary.regularityMessage}</Text>
+          )}
         </View>
 
         <View style={s.card}>
@@ -265,6 +334,11 @@ const s = StyleSheet.create({
   badge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 99 },
   badgeTxt: { fontSize: 11, fontWeight: '700' },
   tipTxt: { fontSize: 13, color: colors.textPrimary, lineHeight: 20 },
+  cycleStatsRow: { flexDirection: 'row' },
+  cycleStatCell: { flex: 1, alignItems: 'center', gap: 2 },
+  cycleStatVal: { fontSize: 15, fontWeight: '900', color: colors.textPrimary },
+  cycleStatLabel: { fontSize: 9, color: colors.textSecondary, fontWeight: '700', textAlign: 'center' },
+  regularityNoteTxt: { fontSize: 11, color: colors.textSecondary, lineHeight: 16 },
   actionRow: { flexDirection: 'row', gap: 8 },
   primaryBtn: { flex: 1, borderRadius: 16, overflow: 'hidden', shadowColor: '#E5457A', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 24, elevation: 8 },
   primaryGrad: { paddingVertical: 14, alignItems: 'center', borderRadius: 16 },

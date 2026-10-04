@@ -152,7 +152,7 @@ const calculateHealthScore = (data) => {
   else if (data.periodLogs && data.periodLogs.length === 1) score += 12;
 
   if (data.riskLevel === 'Low') score += 25;
-  else if (data.riskLevel === 'Moderate') score += 15;
+  else if (data.riskLevel === 'Medium') score += 15;
   else if (data.riskLevel === 'High') score += 5;
 
   if (data.logStreak >= 7) score += 20;

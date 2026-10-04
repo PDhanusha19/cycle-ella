@@ -31,7 +31,7 @@ const signUp = (req, res) => {
         return res.status(500).json({ message: 'Error creating user', error: err.message });
       }
 
-      const token = jwt.sign({ id: result.insertId }, process.env.JWT_SECRET || 'cycleella_secret_key_2024', {
+      const token = jwt.sign({ id: result.insertId }, process.env.JWT_SECRET, {
         expiresIn: '7d'
       });
 
@@ -71,7 +71,7 @@ const login = (req, res) => {
       return res.status(400).json({ message: 'Incorrect password' });
     }
 
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET || 'cycleella_secret_key_2024', {
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
       expiresIn: '7d'
     });
 
@@ -89,14 +89,20 @@ const login = (req, res) => {
 };
 
 // FORGOT PASSWORD
+// The response never contains the OTP and never reveals whether the email
+// is registered — returning either one let anyone reset the password of
+// any account just by asking for it.
+const GENERIC_RESET_RESPONSE = { message: 'If this email is registered, an OTP has been sent.' };
+
 const forgotPassword = (req, res) => {
   const { email } = req.body;
 
   db.query('SELECT * FROM users WHERE email = ?', [email], (err, results) => {
     if (err) return res.status(500).json({ message: 'Database error' });
 
+    // Unknown email: same response as the success path, no OTP issued.
     if (results.length === 0) {
-      return res.status(400).json({ message: 'Email not found' });
+      return res.json(GENERIC_RESET_RESPONSE);
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -106,10 +112,11 @@ const forgotPassword = (req, res) => {
       [otp, otpExpires, email], (err) => {
         if (err) return res.status(500).json({ message: 'Error saving OTP' });
 
-        res.json({
-          message: 'OTP generated successfully',
-          otp: otp
-        });
+        // TODO: send by email/SMS in production. Printing the OTP to the
+        // server console is a development-only delivery channel.
+        console.log(`[DEV] Password reset OTP for ${email}: ${otp} (valid 10 min)`);
+
+        res.json(GENERIC_RESET_RESPONSE);
       });
   });
 };
