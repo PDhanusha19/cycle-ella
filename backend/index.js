@@ -22,6 +22,7 @@ if (missingEnv.length > 0) {
 
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const db = require('./config/db');
 
 const app = express();
@@ -56,6 +57,14 @@ const chatbotRoutes = require('./routes/chatbot');
 app.use('/api/chatbot', chatbotRoutes);
 const nutritionRoutes = require('./routes/nutrition');
 app.use('/api/nutrition', nutritionRoutes);
+const adminRoutes = require('./routes/admin');
+app.use('/api/admin', adminRoutes);
+
+// Admin dashboard — static HTML/CSS/JS, no build step, served same-origin
+// so its fetch() calls need no CORS configuration. Chart.js is served from
+// node_modules (not a CDN) so the dashboard works fully offline.
+app.use('/dashboard/vendor', express.static(path.join(__dirname, 'node_modules/chart.js/dist')));
+app.use('/dashboard', express.static(path.join(__dirname, 'dashboard')));
 
 // Test route
 app.get('/', (req, res) => {

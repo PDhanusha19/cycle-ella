@@ -7,7 +7,19 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../../theme/colors';
 import api from '../../api/api';
-import * as IntentLauncher from 'expo-intent-launcher';
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition';
+
+// Voice input used to launch Android's speech recognizer as an external
+// Activity via expo-intent-launcher and read the result back through
+// startActivityForResult/onActivityResult. That round trip crashed the
+// whole app on current Android (14/15): the OS injects an internal,
+// non-serializable `android.app.ActivityOptions$ActivityOptionsInjector`
+// object into the result Intent's extras, and expo-intent-launcher's
+// native code had no safe way to skip it when converting the result for
+// JS. expo-speech-recognition avoids that entire class of bug by talking
+// to Android's SpeechRecognizer directly in-process (no external Activity,
+// no onActivityResult) — see its event listeners below instead of an
+// awaited result.
 
 const MEAL_TABS = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
 const UNITS = ['g', 'pieces', 'cups', 'tbsp', 'serving'];
@@ -59,6 +71,18 @@ const STOP_WORDS = [
   'today', 'this morning', 'just now',
 ];
 
+// Spoken/typed spellings that don't match the DB's canonical food name.
+const FOOD_NAME_NORMALIZATIONS = [
+  [/\b(dal|dahl|daal|parippu)\b/gi, 'dhal'],
+];
+
+function normalizeFoodName(name) {
+  return FOOD_NAME_NORMALIZATIONS.reduce(
+    (acc, [pattern, replacement]) => acc.replace(pattern, replacement),
+    name
+  );
+}
+
 function parseVoiceInput(text) {
   try {
     let cleaned = text;
@@ -71,7 +95,7 @@ function parseVoiceInput(text) {
     const items = [];
     for (let part of parts) {
       try {
-        const pattern = /^(\d+\.?\d*|a|an|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|couple)?\s*(g|grams?|kg|kilo|kilograms?|pieces?|cups?|tbsp|tablespoons?|tsp|servings?|plates?|bowls?|slices?)?\s*(?:of\s+)?(.+)$/;
+        const pattern = /^(\d+\.?\d*|(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|couple)\b)?\s*(?:(g|grams?|kg|kilo|kilograms?|pieces?|cups?|tbsp|tablespoons?|tsp|servings?|plates?|bowls?|slices?)\b)?\s*(?:of\s+)?(.+)$/;
         const match = part.match(pattern);
         if (match) {
           let [, qty, unit, food] = match;
@@ -85,6 +109,33 @@ function parseVoiceInput(text) {
     }
     return items;
   } catch (_) { return []; }
+}
+
+// Meal-category detection, kept separate from parseVoiceInput/STOP_WORDS on
+// purpose — it runs *before* parseVoiceInput, stripping the meal phrase
+// (and its preposition) out of the sentence first, so e.g. "dal curry for
+// lunch" doesn't get looked up as a food literally named "dal curry for
+// lunch".
+const MEAL_PATTERNS = [
+  { meal: 'Breakfast', re: /\b(?:(?:for|at|during|as)\s+)?breakfast\b/i },
+  { meal: 'Lunch', re: /\b(?:(?:for|at|during|as)\s+)?lunch\b/i },
+  { meal: 'Dinner', re: /\b(?:(?:for|at|during|as)\s+)?dinner\b/i },
+  { meal: 'Snacks', re: /\b(?:(?:as\s+a|for)\s+)?snacks?\b/i },
+];
+
+function detectMealCategory(text) {
+  let best = null;
+  for (const { meal, re } of MEAL_PATTERNS) {
+    const m = text.match(re);
+    if (m && (best === null || m.index < best.index)) {
+      best = { meal, index: m.index, match: m[0] };
+    }
+  }
+  if (!best) return { meal: null, cleanedText: text };
+  const cleanedText = (text.slice(0, best.index) + text.slice(best.index + best.match.length))
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { meal: best.meal, cleanedText };
 }
 
 function calcMacros(food, quantity, unit) {
@@ -158,7 +209,7 @@ function QuantityModal({ visible, food, activeTab, onClose, onAdd, prefillQty, p
   );
 }
 
-function VoiceResultsModal({ visible, items, onClose, onAddItem }) {
+function VoiceResultsModal({ visible, items, meal, onClose, onAddItem }) {
   if (!visible || !items.length) return null;
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -168,7 +219,7 @@ function VoiceResultsModal({ visible, items, onClose, onAddItem }) {
             <Text style={{ fontSize: 24 }}>🎤</Text>
             <View style={{ flex: 1 }}>
               <Text style={m.foodName}>Voice Recognized</Text>
-              <Text style={m.foodCat}>{items.length} food item{items.length > 1 ? 's' : ''} found</Text>
+              <Text style={m.foodCat}>{items.length} food item{items.length > 1 ? 's' : ''} found{meal ? ` · adding to ${meal}` : ''}</Text>
             </View>
             <TouchableOpacity style={m.closeBtn} onPress={onClose}><Text style={m.closeTxt}>✕</Text></TouchableOpacity>
           </View>
@@ -219,6 +270,12 @@ export default function FoodLogScreen({ navigation }) {
   const [voiceText, setVoiceText] = useState('');
   const [voiceItems, setVoiceItems] = useState([]);
   const [showVoiceResults, setShowVoiceResults] = useState(false);
+  // Bridges the gap between onAddVoiceItem opening QuantityModal (for an
+  // item with no detected quantity) and onConfirmAdd firing later — without
+  // this, that confirm would fall back to activeTab instead of the meal the
+  // sentence actually named. Reset after use (onConfirmAdd) and on cancel
+  // (QuantityModal's onClose) so a later *manual* add never inherits it.
+  const [voiceMeal, setVoiceMeal] = useState(null);
   const [aiSuggestions, setAiSuggestions] = useState(null);
   const [aiBasedOn, setAiBasedOn] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -236,6 +293,24 @@ export default function FoodLogScreen({ navigation }) {
       ])).start();
     } else { pulseAnim.setValue(1); }
   }, [isListening]);
+
+  useSpeechRecognitionEvent('start', () => {
+    setIsListening(true);
+    setVoiceText('Listening...');
+  });
+  useSpeechRecognitionEvent('end', () => setIsListening(false));
+  useSpeechRecognitionEvent('result', (event) => {
+    if (!event.isFinal) return;
+    const spoken = event.results[0]?.transcript;
+    if (spoken) {
+      setVoiceText(`"${spoken}"`);
+      processSentence(spoken);
+    }
+  });
+  useSpeechRecognitionEvent('nomatch', () => setVoiceText('Not recognized. Try again!'));
+  useSpeechRecognitionEvent('error', (event) => {
+    setVoiceText(event.error === 'not-allowed' ? 'Microphone permission denied.' : '');
+  });
 
   const loadToday = async () => {
     try {
@@ -299,41 +374,66 @@ export default function FoodLogScreen({ navigation }) {
     } catch (_) {}
   };
 
+  const processSentence = async (text) => {
+    const { meal, cleanedText } = detectMealCategory(text);
+    const finalMeal = meal || 'Snacks';
+    const parsed = parseVoiceInput(cleanedText);
+    if (!parsed.length) return;
+    const items = await Promise.all(parsed.map(async (item) => {
+      const normalizedFood = normalizeFoodName(item.food);
+      let dbFood = null;
+      try {
+        const res = await fetch(`${BASE}/food/search?q=${encodeURIComponent(normalizedFood)}`);
+        const data = await res.json();
+        dbFood = data?.items?.[0] || null;
+      } catch (err) {
+        console.log('Voice food lookup failed for', normalizedFood, err);
+      }
+      return { ...item, dbFood, meal: finalMeal };
+    }));
+    setVoiceItems(items);
+    setShowVoiceResults(true);
+    setActiveTab(finalMeal);
+  };
+
+  // Defined before onSelectFood/onConfirmAdd appear lower in this file, but
+  // only ever *called* later from VoiceResultsModal, by which point both
+  // are already assigned in this render's closure — same pattern already
+  // used by the 'result' listener above referencing handleSearch.
+  const onAddVoiceItem = (item) => {
+    if (!item.dbFood) {
+      Alert.alert('Not Found', `Couldn't find "${item.food}" in the food database. Try typing it manually.`);
+      return;
+    }
+    if (!item.quantity) {
+      setShowVoiceResults(false);
+      onSelectFood(item.dbFood);
+      setVoiceMeal(item.meal);
+      return;
+    }
+    const macros = calcMacros(item.dbFood, item.quantity, item.unit || 'serving');
+    onConfirmAdd(item.dbFood, String(item.quantity), item.unit || 'serving', macros, item.meal);
+  };
+
   const startVoiceRecognition = async () => {
     if (Platform.OS !== 'android') {
       Alert.alert('Voice Recognition', 'Supported on Android only.');
       return;
     }
     try {
-      setIsListening(true);
-      setVoiceText('Listening...');
-      const result = await IntentLauncher.startActivityAsync(
-        'android.speech.action.RECOGNIZE_SPEECH',
-        {
-          extra: {
-            'android.speech.extra.LANGUAGE_MODEL': 'free_form',
-            'android.speech.extra.LANGUAGE': activeLang,
-            'android.speech.extra.PROMPT': 'Say a food name...',
-            'android.speech.extra.MAX_RESULTS': 1,
-          },
-        }
-      );
-      setIsListening(false);
-      let spoken = null;
-      try {
-        const extras = result?.extra || result?.data || {};
-        const matches = extras?.['android.speech.extra.RESULTS'];
-        if (Array.isArray(matches) && matches[0]) {
-          spoken = String(matches[0]);
-        }
-      } catch (_) {}
-      if (spoken) {
-        setVoiceText(`"${spoken}"`);
-        setSearch(spoken);
-        handleSearch(spoken);
-      } else {
-        setVoiceText('Not recognized. Try again!');
+      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Voice Recognition', 'Microphone permission is required to use voice input.');
+        return;
       }
+      // start() is fire-and-forget — isListening/voiceText/result handling
+      // all happen in the useSpeechRecognitionEvent listeners above.
+      ExpoSpeechRecognitionModule.start({
+        lang: activeLang,
+        interimResults: false,
+        continuous: false,
+        maxAlternatives: 1,
+      });
     } catch (_) {
       setIsListening(false);
       setVoiceText('');
@@ -345,9 +445,10 @@ export default function FoodLogScreen({ navigation }) {
     setSelectedFood(item); setShowModal(true);
   };
 
-  const onConfirmAdd = async (food, quantity, unit, macros) => {
+  const onConfirmAdd = async (food, quantity, unit, macros, meal = activeTab) => {
     setShowModal(false); setSelectedFood(null);
     setPrefillQty(null); setPrefillUnit(null);
+    setVoiceMeal(null); // consumed — don't leak into a later unrelated add
 
     // Optimistic add with a temp key — patched with the real DB id once
     // the request resolves, so a delete button works even on an item
@@ -362,13 +463,13 @@ export default function FoodLogScreen({ navigation }) {
 
     setFoodItems(prev => ({
       ...prev,
-      [activeTab]: [...(prev[activeTab] || []), newItem]
+      [meal]: [...(prev[meal] || []), newItem]
     }));
     updateNutritionOptimistic(macros, 1);
 
     try {
       const res = await api.post('/food/log', {
-        meal_type: activeTab, food_name: food.name,
+        meal_type: meal, food_name: food.name,
         calories: macros.calories, protein: macros.protein,
         carbs: macros.carbs, fats: macros.fats,
         quantity: parseFloat(quantity), unit,
@@ -377,7 +478,7 @@ export default function FoodLogScreen({ navigation }) {
       if (newId) {
         setFoodItems(prev => ({
           ...prev,
-          [activeTab]: (prev[activeTab] || []).map(it => it.tempKey === tempKey ? { ...it, id: newId } : it)
+          [meal]: (prev[meal] || []).map(it => it.tempKey === tempKey ? { ...it, id: newId } : it)
         }));
       }
     } catch (_) {}
@@ -430,9 +531,10 @@ export default function FoodLogScreen({ navigation }) {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={['top']}>
       <QuantityModal visible={showModal} food={selectedFood} activeTab={activeTab}
         prefillQty={prefillQty} prefillUnit={prefillUnit}
-        onClose={() => { setShowModal(false); setSelectedFood(null); }} onAdd={onConfirmAdd} />
+        onClose={() => { setShowModal(false); setSelectedFood(null); setVoiceMeal(null); }}
+        onAdd={(food, quantity, unit, macros) => onConfirmAdd(food, quantity, unit, macros, voiceMeal || activeTab)} />
       <VoiceResultsModal visible={showVoiceResults} items={voiceItems}
-        onClose={() => setShowVoiceResults(false)} onAddItem={() => {}} />
+        onClose={() => setShowVoiceResults(false)} onAddItem={onAddVoiceItem} meal={voiceItems[0]?.meal} />
 
       <View style={s.header}>
         <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()}>
@@ -468,7 +570,8 @@ export default function FoodLogScreen({ navigation }) {
         </View>
 
         <TextInput style={s.searchInput} placeholder="🔍 Or type food name..."
-          placeholderTextColor={colors.textSecondary} value={search} onChangeText={handleSearch} />
+          placeholderTextColor={colors.textSecondary} value={search} onChangeText={handleSearch}
+          returnKeyType="done" onSubmitEditing={() => processSentence(search)} />
 
         {searchResults.length > 0 && (
           <View style={s.card}>

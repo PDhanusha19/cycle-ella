@@ -27,7 +27,15 @@ export default function LoginScreen({ navigation }) {
       setUser(user);
       navigation.replace('Main');
     } catch (err) {
-      Alert.alert('Login Failed', err.response?.data?.message || 'Invalid credentials');
+      // err.response only exists if a server actually answered. No
+      // response at all (wrong/unreachable API URL, timeout, offline) is a
+      // connection problem, not a wrong password — showing "Invalid
+      // credentials" for that sent users second-guessing a password that
+      // was never actually checked.
+      const message = err.response
+        ? (err.response.data?.message || 'Invalid credentials')
+        : 'Could not reach the server. Check your internet connection and try again.';
+      Alert.alert('Login Failed', message);
     } finally {
       setLoading(false);
     }

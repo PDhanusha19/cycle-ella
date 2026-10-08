@@ -1,0 +1,46 @@
+# EAS Build archives the whole git repository root (not just frontend/),
+# and as soon as this file exists it REPLACES every .gitignore in the repo
+# for archiving purposes (root .gitignore and frontend/.gitignore both stop
+# being consulted) — see https://docs.expo.dev/build-reference/easignore/
+# and https://github.com/expo/eas-cli/issues/4259. So every exclusion
+# needed anywhere in the repo has to be listed here, not just the new ones.
+#
+# Why this file exists: only frontend/ (the Expo/React Native app) is
+# needed to build the Android/iOS app. backend/ (Node/Express API),
+# ai-service/ (Flask AI service, including its Python .venv and trained
+# model files) and tests/ (Playwright) are unrelated to the client build
+# and were being uploaded anyway — ballooning the upload to ~139MB, which
+# is almost certainly why two uploads in a row dropped mid-transfer
+# (ECONNRESET, then a 502) instead of completing quickly.
+
+/ai-service
+/backend
+/tests
+/.github
+/.git
+/README.md
+
+# Mirrors frontend/.gitignore, which is no longer applied once this file
+# exists — without this, frontend/node_modules/ (~366MB) would upload too.
+frontend/node_modules/
+frontend/.expo/
+frontend/dist/
+frontend/web-build/
+frontend/expo-env.d.ts
+frontend/.kotlin/
+frontend/*.orig.*
+frontend/*.jks
+frontend/*.p8
+frontend/*.p12
+frontend/*.key
+frontend/*.mobileprovision
+frontend/.metro-health-check*
+frontend/npm-debug.*
+frontend/yarn-debug.*
+frontend/yarn-error.*
+frontend/.DS_Store
+frontend/*.pem
+frontend/.env*.local
+frontend/*.tsbuildinfo
+frontend/ios
+frontend/android

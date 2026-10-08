@@ -5,21 +5,30 @@ import { Platform, Alert } from 'react-native';
 import useStore from '../store/useStore';
 import { resetToLogin } from '../navigation/navigationRef';
 
-// The backend runs on the same dev machine as the Metro bundler, so reuse
-// Metro's own LAN IP instead of a hardcoded one — hardcoding it breaks every
-// time this machine's IP changes (different wifi, DHCP renewal, etc.), which
-// silently hangs every request until the 30s timeout below with no visible
-// error. On web, Constants.expoConfig.hostUri is never populated (that's an
-// Expo Go/dev-client manifest field, not something a plain browser page
-// gets), so use the page's own hostname there instead — it's already
-// pointed at wherever Metro is being served from. Falls back to a fixed IP
-// only if neither is available (e.g. a production build, where this should
-// be replaced with a real API URL).
-const FALLBACK_HOST = '10.49.252.46';
+// A standalone EAS build (the installed APK) has no Metro dev server
+// running inside it, so Constants.expoConfig.hostUri is always undefined
+// there — there is nothing to "detect" a host from. It must be supplied at
+// build time instead, via app.json's extra.apiUrl, which is what this
+// checks first. This used to fall through to a hardcoded LAN IP, which
+// silently went stale the moment the dev machine's IP changed (different
+// wifi, DHCP renewal, etc.) — every request then hung for the full 30s
+// timeout below and failed with no server response, which the login screen
+// mislabeled as "Invalid credentials" instead of a connection failure.
+// Update extra.apiUrl (and rebuild) whenever the backend's address changes.
+//
+// Inside Expo Go / a dev client, Metro's own LAN IP (hostUri) is always
+// live and correct, so it still takes priority there over a possibly-stale
+// configured apiUrl. On web, hostUri is never populated (that's an Expo
+// Go/dev-client manifest field only), so the page's own hostname is used
+// instead — it's already pointed at wherever Metro is being served from.
+const CONFIGURED_API_URL = Constants.expoConfig?.extra?.apiUrl;
+const FALLBACK_HOST = '192.168.8.141'; // last resort only — see note above
 const metroHost = Platform.OS === 'web'
   ? (typeof window !== 'undefined' ? window.location.hostname : null)
   : Constants.expoConfig?.hostUri?.split(':')?.[0];
-const BASE_URL = `http://${metroHost || FALLBACK_HOST}:3000/api`;
+const BASE_URL = metroHost
+  ? `http://${metroHost}:3000/api`
+  : (CONFIGURED_API_URL || `http://${FALLBACK_HOST}:3000/api`);
 
 const api = axios.create({
   baseURL: BASE_URL,

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Users and usage &mdash; Cycle Ella Admin</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23E5457A'/%3E%3Cstop offset='1' stop-color='%239B4DB5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='40' height='40' rx='10' fill='url(%23g)'/%3E%3Ctext x='20' y='28' text-anchor='middle' font-family='system-ui' font-weight='900' font-size='22' fill='%23fff'%3EE%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/dashboard/css/tokens.css" />
+  <link rel="stylesheet" href="/dashboard/css/layout.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar-slot"></aside>
+    <div class="main">
+      <header class="topbar" id="topbar-slot"></header>
+      <main class="content">
+        <div class="content-header">
+          <div class="meta"><span>Last updated: <span id="last-updated">&ndash;</span></span></div>
+          <button class="btn btn-ghost" id="refresh-btn" type="button">Refresh</button>
+        </div>
+
+        <section class="charts-grid">
+          <div class="card chart-card">
+            <h3>Language preference</h3>
+            <p class="caption">App language selected at onboarding</p>
+            <div class="chart-wrap"><canvas id="chart-languages"></canvas></div>
+          </div>
+          <div class="card chart-card">
+            <h3>Health conditions</h3>
+            <p class="caption">Self-reported diabetes, cholesterol and blood pressure status</p>
+            <div class="chart-wrap"><canvas id="chart-health"></canvas></div>
+          </div>
+          <div class="card chart-card span-2">
+            <h3>Feature usage</h3>
+            <p class="caption">Total logged entries per app module</p>
+            <div class="chart-wrap"><canvas id="chart-feature-usage"></canvas></div>
+          </div>
+        </section>
+
+        <div id="footer-slot"></div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/dashboard/vendor/chart.umd.min.js"></script>
+  <script src="/dashboard/js/layout.js"></script>
+  <script src="/dashboard/js/api.js"></script>
+  <script src="/dashboard/js/charts-common.js"></script>
+  <script src="/dashboard/js/users.js"></script>
+</body>
+</html>

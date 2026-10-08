@@ -1,0 +1,66 @@
+{
+  "dataset": {
+    "source": "Kaggle PCOS dataset, 10 hospitals in Kerala, India",
+    "records": 541,
+    "complete_records": 537,
+    "pcos": 175,
+    "non_pcos": 362,
+    "pcos_percent": 32.6
+  },
+  "tiers": [
+    { "id": "T1", "name": "Self-reportable", "k": 13 },
+    { "id": "T2", "name": "+ Home-measurable", "k": 20 },
+    { "id": "T3", "name": "+ Laboratory", "k": 32 },
+    { "id": "T4", "name": "+ Ultrasound", "k": 37 }
+  ],
+  "auc": {
+    "logistic_regression": [88.2, 87.5, 86.5, 94.3],
+    "random_forest": [88.8, 89.0, 88.5, 95.5],
+    "svm": [88.6, 87.6, 87.2, 94.3]
+  },
+  "lr_detail": [
+    { "tier": "T1", "auc": 88.2, "ci": [86.5, 89.8], "sensitivity": 80.8, "specificity": 83.6, "accuracy": 82.7, "ppv": 71.1, "npv": 90.2, "pr_auc": 81.7, "brier": 0.133 },
+    { "tier": "T2", "auc": 87.5, "ci": [85.9, 89.2], "sensitivity": 80.1, "specificity": 82.7, "accuracy": 81.9, "ppv": 69.8, "npv": 89.7, "pr_auc": 80.2, "brier": 0.137 },
+    { "tier": "T3", "auc": 86.5, "ci": [84.6, 88.3], "sensitivity": 77.7, "specificity": 83.3, "accuracy": 81.4, "ppv": 69.9, "npv": 88.7, "pr_auc": 79.7, "brier": 0.141 },
+    { "tier": "T4", "auc": 94.3, "ci": [93.3, 95.4], "sensitivity": 87.2, "specificity": 89.2, "accuracy": 88.5, "ppv": 80.4, "npv": 93.6, "pr_auc": 91.6, "brier": 0.085 }
+  ],
+  "t1_percent_of_t4_auc": 93.4,
+  "corrected_tests": [
+    { "comparison": "T1 to T2", "delta_auc": -0.63, "p": 0.120, "ci": [-1.43, 0.17], "significant": false },
+    { "comparison": "T2 to T3", "delta_auc": -1.06, "p": 0.233, "ci": [-2.83, 0.71], "significant": false },
+    { "comparison": "T3 to T4", "delta_auc": 7.88, "p": 0.0002, "ci": [3.97, 11.79], "significant": true },
+    { "comparison": "T1 to T4", "delta_auc": 6.19, "p": 0.0012, "ci": [2.58, 9.79], "significant": true }
+  ],
+  "naive_wilcoxon_p": { "T1 to T2": 0.0002, "T2 to T3": 0.0074 },
+  "deployed_model_holdout": {
+    "test_records": 108,
+    "accuracy": 80.6,
+    "precision": 65.9,
+    "recall": 82.9,
+    "f1": 73.4,
+    "auc": 88.2,
+    "cv_accuracy": 82.4,
+    "confusion": { "tn": 58, "fp": 15, "fn": 6, "tp": 29 }
+  },
+  "parity": { "records": 539, "identical_risk_levels": 539, "max_probability_difference": 0.0005 },
+  "testing": {
+    "playwright_passed": 58,
+    "playwright_failed": 0,
+    "playwright_seconds": 2.6,
+    "run_date": "30/09/2026",
+    "unit_tests_passed": 9,
+    "integration_tests_passed": 2,
+    "manual_cases_executed": 14,
+    "manual_cases_passed": 14
+  },
+  "uat": {
+    "participants": 23,
+    "tasks_completed": 226,
+    "tasks_total": 242,
+    "sus_mean": 75.7,
+    "sus_sd": 22.6,
+    "sus_without_identical_pattern": 68.9,
+    "feature_rating_range": [4.26, 4.43],
+    "note": "Indicative only: small convenience sample"
+  }
+}

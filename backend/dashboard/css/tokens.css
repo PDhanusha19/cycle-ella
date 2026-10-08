@@ -1,0 +1,36 @@
+:root {
+  --pink: #E5457A;
+  --pink-dark: #C73568;
+  --purple: #9B4DB5;
+  --purple-dark: #7A3A91;
+  --navy: #1C1035;
+  --navy-light: #2A1A4A;
+  --bg: #FAF0FF;
+  --surface: #FFFFFF;
+  --lavender: #EDE4FA;
+  --light-pink: #FDE8F0;
+  --border: #E8D4F5;
+  --text-primary: #2D1B4E;
+  --text-secondary: #8B7A9E;
+  --green: #2ECC8E;
+  --green-bg: #D4F5E9;
+  --amber: #F5A623;
+  --amber-bg: #FFF3D4;
+  --blue: #3B9EFF;
+  --blue-bg: #DFF0FF;
+
+  --gradient-primary: linear-gradient(135deg, #E5457A 0%, #9B4DB5 100%);
+  --gradient-dark: linear-gradient(135deg, #1C1035 0%, #2A1A4A 100%);
+  --gradient-soft: linear-gradient(135deg, #FAD4E5 0%, #E8D4F5 100%);
+
+  --shadow-sm: 0 2px 8px rgba(155, 77, 181, 0.08);
+  --shadow-md: 0 4px 16px rgba(155, 77, 181, 0.12);
+  --shadow-lg: 0 8px 32px rgba(155, 77, 181, 0.18);
+  --shadow-pink: 0 8px 24px rgba(229, 69, 122, 0.35);
+
+  --radius-sm: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}

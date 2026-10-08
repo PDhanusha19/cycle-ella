@@ -1,18 +1,36 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { isRunningInExpoGo } from 'expo';
 import { colors } from '../../theme/colors';
 import api from '../../api/api';
-import * as Notifications from 'expo-notifications';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+// Expo SDK 53+ makes expo-notifications throw the instant it's imported on
+// Android inside Expo Go (a module-level side effect registers a push
+// token listener that Expo Go no longer supports — see
+// node_modules/expo-notifications/build/DevicePushTokenAutoRegistration.fx.js
+// and warnOfExpoGoPushUsage.js). There's no way to catch that import-time
+// throw, so the module must never be imported at all in that environment —
+// it's only required lazily, and only outside Expo Go on Android. Local
+// reminders still work everywhere else (dev build, APK, iOS Expo Go).
+const pushUnsupported = Platform.OS === 'android' && isRunningInExpoGo();
+
+let Notifications = null;
+function getNotifications() {
+  if (pushUnsupported) return null;
+  if (!Notifications) {
+    Notifications = require('expo-notifications');
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+  }
+  return Notifications;
+}
 
 const DEFAULT_REMINDERS = {
   meal: [
@@ -45,26 +63,30 @@ const NOTIFICATION_CONTENT = {
 };
 
 async function requestPermissions() {
+  const N = getNotifications();
+  if (!N) return false;
   try {
-    const { status: existing } = await Notifications.getPermissionsAsync();
+    const { status: existing } = await N.getPermissionsAsync();
     if (existing === 'granted') return true;
-    const { status } = await Notifications.requestPermissionsAsync();
+    const { status } = await N.requestPermissionsAsync();
     return status === 'granted';
   } catch (_) { return false; }
 }
 
 async function scheduleReminder(id, hour, minute) {
+  const N = getNotifications();
+  if (!N) return;
   try {
-    await Notifications.cancelScheduledNotificationAsync(id).catch(() => {});
+    await N.cancelScheduledNotificationAsync(id).catch(() => {});
     const content = NOTIFICATION_CONTENT[id] || {
       title: '🌸 Cycle Ella Reminder',
       body: 'Time for your health check-in!',
     };
-    await Notifications.scheduleNotificationAsync({
+    await N.scheduleNotificationAsync({
       identifier: id,
       content: { ...content, sound: true },
       trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        type: N.SchedulableTriggerInputTypes.DAILY,
         hour,
         minute,
       },
@@ -73,7 +95,9 @@ async function scheduleReminder(id, hour, minute) {
 }
 
 async function cancelReminder(id) {
-  try { await Notifications.cancelScheduledNotificationAsync(id); } catch (_) {}
+  const N = getNotifications();
+  if (!N) return;
+  try { await N.cancelScheduledNotificationAsync(id); } catch (_) {}
 }
 
 function ReminderSection({ title, items, onToggle }) {
@@ -140,15 +164,20 @@ export default function RemindersScreen({ navigation }) {
   };
 
   const sendTestNotification = async () => {
+    const N = getNotifications();
+    if (!N) {
+      Alert.alert('Note 🌸', 'Notifications aren\'t available in Expo Go on Android. Build the APK (or use a dev build) to test fully!');
+      return;
+    }
     try {
-      await Notifications.scheduleNotificationAsync({
+      await N.scheduleNotificationAsync({
         content: {
           title: '🌸 Cycle Ella Test',
           body: 'Notifications are working perfectly!',
           sound: true,
         },
         trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          type: N.SchedulableTriggerInputTypes.TIME_INTERVAL,
           seconds: 3,
           repeats: false,
         },
@@ -178,7 +207,11 @@ export default function RemindersScreen({ navigation }) {
               {permissionGranted ? 'Notifications Active' : 'Notifications Disabled'}
             </Text>
             <Text style={[s.permSub, { color: permissionGranted ? '#1a8a5c' : colors.pink }]}>
-              {permissionGranted ? 'You will receive reminders on time' : 'Enable in phone settings'}
+              {permissionGranted
+                ? 'You will receive reminders on time'
+                : pushUnsupported
+                  ? 'Not available in Expo Go on Android — build the APK to enable'
+                  : 'Enable in phone settings'}
             </Text>
           </View>
           <TouchableOpacity style={s.testBtn} onPress={sendTestNotification}>

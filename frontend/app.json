@@ -22,7 +22,8 @@
     "extra": {
       "eas": {
         "projectId": "ea5e9dca-e85b-4758-910f-1b2e5f17a281"
-      }
+      },
+      "apiUrl": "http://192.168.8.141:3000/api"
     },
     "plugins": [
       "expo-font",
@@ -43,7 +44,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
-      ]
+      ],
+      "expo-speech-recognition"
     ]
   }
 }
